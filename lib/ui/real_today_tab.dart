@@ -30,7 +30,7 @@ class RealTodayTab extends StatelessWidget {
           DiaryHero(
             eyebrow: '今天',
             title: '${profile.maleName} 和 ${profile.femaleName}',
-            subtitle: '把今天值得记住的小事留在这里。日子不一定轰轰烈烈，但回头看时，会发现每一篇都很重要。',
+            subtitle: '最近写下来的日记。',
             trailing: Container(
               width: 78,
               height: 78,
@@ -42,9 +42,9 @@ class RealTodayTab extends StatelessWidget {
               child: Text(
                 '$togetherDays',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: DiaryPalette.rose,
-                  fontWeight: FontWeight.w900,
-                ),
+                      color: DiaryPalette.rose,
+                      fontWeight: FontWeight.w900,
+                    ),
               ),
             ),
             footer: Wrap(
@@ -66,13 +66,13 @@ class RealTodayTab extends StatelessWidget {
           const SizedBox(height: 24),
           const DiarySectionHeader(
             title: '最近记录',
-            subtitle: '最近写下的内容会优先显示在这里，方便你们随手回看。',
+            subtitle: '按时间倒序显示。',
           ),
           const SizedBox(height: 14),
           if (latestEntries.isEmpty)
             const DiaryEmptyState(
-              title: '还没有最近记录',
-              subtitle: '点右下角的“写日记”，先写下第一篇属于你们的内容。',
+              title: '还没有日记',
+              subtitle: '点右下角开始写。',
             )
           else
             ...latestEntries.map(
@@ -129,10 +129,10 @@ class _TodayEntryCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: DiaryPalette.ink,
-                      fontWeight: FontWeight.w900,
-                      height: 1.15,
-                    ),
+                          color: DiaryPalette.ink,
+                          fontWeight: FontWeight.w900,
+                          height: 1.15,
+                        ),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -140,9 +140,9 @@ class _TodayEntryCard extends StatelessWidget {
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.5,
-                    ),
+                          color: DiaryPalette.wine,
+                          height: 1.5,
+                        ),
                   ),
                   const SizedBox(height: 14),
                   Wrap(
@@ -151,9 +151,16 @@ class _TodayEntryCard extends StatelessWidget {
                     children: [
                       DiaryBadge(label: entry.mood),
                       DiaryBadge(
-                        label: formatDiaryDate(entry.createdAt),
+                        label:
+                            '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
                         tone: DiaryBadgeTone.ink,
                       ),
+                      if (entry.updatedAt != null)
+                        DiaryBadge(
+                          label:
+                              '更新 ${formatDiaryShortDate(entry.updatedAt!)} ${formatDiaryTime(entry.updatedAt!)}',
+                          tone: DiaryBadgeTone.sand,
+                        ),
                       if (entry.attachments.isNotEmpty)
                         DiaryBadge(
                           label: '${entry.attachments.length} 张图',

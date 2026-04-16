@@ -56,6 +56,7 @@ class OneDriveAuthService {
       deviceCode: jsonMap['device_code'] as String,
       userCode: jsonMap['user_code'] as String,
       verificationUri: jsonMap['verification_uri'] as String,
+      verificationUriComplete: jsonMap['verification_uri_complete'] as String?,
       message: jsonMap['message'] as String,
       intervalSeconds: (jsonMap['interval'] as num?)?.toInt() ?? 5,
       expiresInSeconds: (jsonMap['expires_in'] as num?)?.toInt() ?? 900,

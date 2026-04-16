@@ -112,9 +112,9 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DiaryHero(
-            eyebrow: '回忆',
-            title: '时间线',
-            subtitle: '按关键词、心情和日期筛选你们写过的内容，查找和回看都会更顺手。',
+            eyebrow: '时间线',
+            title: '所有日记',
+            subtitle: '筛选和查看所有内容。',
             footer: Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -140,7 +140,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
               children: [
                 const DiarySectionHeader(
                   title: '筛选',
-                  subtitle: '你可以按关键词、心情和日期快速缩小范围。',
+                  subtitle: '按关键词、心情和日期筛选。',
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -221,19 +221,19 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
                 ? '全部日记'
                 : '筛选结果',
             subtitle: query.isEmpty && _selectedMood == null && _selectedDate == null
-                ? '默认按时间倒序显示，最新写下的内容会排在最前面。'
-                : '当前共匹配 ${filteredEntries.length} 篇。',
+                ? '按时间倒序显示。'
+                : '共 ${filteredEntries.length} 篇。',
           ),
           const SizedBox(height: 14),
           if (widget.entries.isEmpty)
             const DiaryEmptyState(
-              title: '还没有任何日记',
-              subtitle: '先写下第一篇内容，时间线就会从这里开始生长。',
+              title: '还没有日记',
+              subtitle: '先写一篇。',
             )
           else if (filteredEntries.isEmpty)
             const DiaryEmptyState(
               title: '没有匹配结果',
-              subtitle: '换个关键词，或者清空筛选条件再试试。',
+              subtitle: '换个关键词，或者清空筛选条件。',
             )
           else
             ...filteredEntries.map(
@@ -296,16 +296,16 @@ class _TimelineEntryCard extends StatelessWidget {
                       Text(
                         '${entry.createdAt.day}',
                         style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          color: DiaryPalette.rose,
-                          fontWeight: FontWeight.w900,
-                        ),
+                              color: DiaryPalette.rose,
+                              fontWeight: FontWeight.w900,
+                            ),
                       ),
                       Text(
                         '${entry.createdAt.month}月',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: DiaryPalette.wine,
-                          fontWeight: FontWeight.w700,
-                        ),
+                              color: DiaryPalette.wine,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
                     ],
                   ),
@@ -318,16 +318,16 @@ class _TimelineEntryCard extends StatelessWidget {
                       Text(
                         entry.title,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
-                        ),
+                              color: DiaryPalette.ink,
+                              fontWeight: FontWeight.w900,
+                            ),
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        formatDiaryDate(entry.createdAt),
+                        '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                              color: DiaryPalette.wine,
+                            ),
                       ),
                     ],
                   ),
@@ -363,9 +363,9 @@ class _TimelineEntryCard extends StatelessWidget {
                     maxLines: 5,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.55,
-                    ),
+                          color: DiaryPalette.wine,
+                          height: 1.55,
+                        ),
                   ),
                 ),
                 if (entry.attachments.isNotEmpty) ...[
@@ -396,7 +396,8 @@ class _TimelineEntryCard extends StatelessWidget {
                 ),
                 if (entry.updatedAt != null)
                   DiaryBadge(
-                    label: '最近更新 ${formatDiaryShortDate(entry.updatedAt!)}',
+                    label:
+                        '更新 ${formatDiaryShortDate(entry.updatedAt!)} ${formatDiaryTime(entry.updatedAt!)}',
                     tone: DiaryBadgeTone.ink,
                   ),
               ],

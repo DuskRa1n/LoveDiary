@@ -82,6 +82,7 @@ class OneDriveDeviceCodeSession {
     required this.deviceCode,
     required this.userCode,
     required this.verificationUri,
+    this.verificationUriComplete,
     required this.message,
     required this.intervalSeconds,
     required this.expiresInSeconds,
@@ -93,6 +94,7 @@ class OneDriveDeviceCodeSession {
   final String deviceCode;
   final String userCode;
   final String verificationUri;
+  final String? verificationUriComplete;
   final String message;
   final int intervalSeconds;
   final int expiresInSeconds;

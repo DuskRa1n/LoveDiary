@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 
 import '../models/diary_models.dart';
+import '../sync/onedrive/onedrive_models.dart';
 import '../sync/sync_models.dart';
 import '../sync/webdav/webdav_models.dart';
 
@@ -36,6 +37,7 @@ class DiaryStorage {
   static const _syncStateFileName = 'state.json';
   static const _tombstonesFileName = 'tombstones.json';
   static const _webDavConfigFileName = 'webdav_account.json';
+  static const _oneDriveConfigFileName = 'onedrive_account.json';
   static const _dustbinRetention = Duration(days: 7);
 
   Future<List<DiaryEntry>> loadEntries() async {
@@ -530,6 +532,37 @@ class DiaryStorage {
     }
   }
 
+  Future<OneDriveSyncConfig?> loadOneDriveSyncConfig() async {
+    final syncDirectory = await ensureSyncDirectory();
+    final configFile = File(_join(syncDirectory.path, _oneDriveConfigFileName));
+    if (!await configFile.exists()) {
+      return null;
+    }
+
+    try {
+      final jsonMap = jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
+      return OneDriveSyncConfig.fromJson(jsonMap);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveOneDriveSyncConfig(OneDriveSyncConfig config) async {
+    final syncDirectory = await ensureSyncDirectory();
+    final configFile = File(_join(syncDirectory.path, _oneDriveConfigFileName));
+    await configFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(config.toJson()),
+    );
+  }
+
+  Future<void> clearOneDriveSyncConfig() async {
+    final syncDirectory = await ensureSyncDirectory();
+    final configFile = File(_join(syncDirectory.path, _oneDriveConfigFileName));
+    if (await configFile.exists()) {
+      await configFile.delete();
+    }
+  }
+
   Future<List<LocalSyncFile>> listSyncFiles() async {
     await purgeExpiredDustbinEntries();
     final rootDirectory = await _ensureRootDirectory();
@@ -796,7 +829,8 @@ class DiaryStorage {
   bool _isSyncMetadataFile(String relativePath) {
     return relativePath == '$_syncDirectoryName/$_syncStateFileName' ||
         relativePath == '$_syncDirectoryName/$_tombstonesFileName' ||
-        relativePath == '$_syncDirectoryName/$_webDavConfigFileName';
+        relativePath == '$_syncDirectoryName/$_webDavConfigFileName' ||
+        relativePath == '$_syncDirectoryName/$_oneDriveConfigFileName';
   }
 
   bool _isDraftFile(String relativePath) {

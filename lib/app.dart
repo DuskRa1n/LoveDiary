@@ -8,11 +8,17 @@ import 'package:image_picker/image_picker.dart';
 import 'data/diary_storage.dart';
 import 'models/diary_models.dart';
 import 'sync/diary_sync_executor.dart';
+import 'sync/onedrive/onedrive_app_config.dart';
+import 'sync/onedrive/onedrive_auth_service.dart';
+import 'sync/onedrive/onedrive_models.dart';
+import 'sync/onedrive/onedrive_remote_source.dart';
 import 'sync/sync_models.dart';
+import 'sync/sync_remote_source.dart';
 import 'sync/webdav/jianguoyun_debug_bootstrap.dart';
 import 'sync/webdav/webdav_models.dart';
 import 'sync/webdav/webdav_remote_source.dart';
 import 'ui/diary_design.dart';
+import 'ui/onedrive_connect_page.dart';
 import 'ui/real_today_tab.dart';
 import 'ui/real_timeline_tab.dart';
 import 'ui/real_us_tab.dart';
@@ -141,11 +147,14 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   List<DiaryEntry> _entries = const [];
   CoupleProfile _profile = DiaryStorage.seedProfile();
   bool _isLoaded = false;
+  bool _isConnectingOneDrive = false;
+  bool _isSyncingOneDrive = false;
   bool _isEditingJianguoyun = false;
   bool _isSyncingJianguoyun = false;
   bool _hasHandledStartupRecovery = false;
   int _currentIndex = 0;
   DateTime? _lastSyncedAt;
+  OneDriveSyncConfig? _oneDriveConfig;
   WebDavSyncConfig? _jianguoyunConfig;
   String? _storageRootPath;
   String? _startupLoadError;
@@ -170,6 +179,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       resolvedRootPath = rootDirectory.path;
       currentStep = 'loadSyncState';
       final syncState = await widget.storage.loadSyncState();
+      currentStep = 'loadOneDriveSyncConfig';
+      final oneDriveConfig = await widget.storage.loadOneDriveSyncConfig();
       currentStep = 'loadWebDavSyncConfig';
       final jianguoyunConfig = await widget.storage.loadWebDavSyncConfig();
 
@@ -181,6 +192,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         _entries = entries;
         _profile = profile;
         _lastSyncedAt = syncState.lastSyncedAt;
+        _oneDriveConfig = oneDriveConfig;
         _jianguoyunConfig = jianguoyunConfig;
         _storageRootPath = rootDirectory.path;
         _startupLoadError = null;
@@ -216,6 +228,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         _entries = const [];
         _profile = DiaryStorage.seedProfile();
         _lastSyncedAt = null;
+        _oneDriveConfig = null;
         _jianguoyunConfig = null;
         _storageRootPath = resolvedRootPath;
         _startupLoadError = diagnostic;
@@ -516,6 +529,188 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     );
   }
 
+  OneDriveAuthService _oneDriveAuthService() {
+    return OneDriveAuthService(storage: widget.storage);
+  }
+
+  OneDriveRemoteSource _oneDriveRemoteSource() {
+    return OneDriveRemoteSource(authService: _oneDriveAuthService());
+  }
+
+  Future<void> _connectOneDrive({String? remoteFolder}) async {
+    if (_isConnectingOneDrive || _isSyncingOneDrive) {
+      return;
+    }
+
+    setState(() {
+      _isConnectingOneDrive = true;
+    });
+
+    try {
+      final config = await Navigator.of(context).push<OneDriveSyncConfig>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => OneDriveConnectPage(
+            authService: _oneDriveAuthService(),
+            clientId: kOneDriveClientId,
+            tenant: kOneDriveTenant,
+            remoteFolder:
+                remoteFolder ??
+                _oneDriveConfig?.remoteFolder ??
+                kOneDriveRemoteFolder,
+          ),
+        ),
+      );
+
+      if (config == null || !mounted) {
+        return;
+      }
+
+      setState(() {
+        _oneDriveConfig = config;
+      });
+      _showMessage('OneDrive 已连接');
+    } catch (error) {
+      if (mounted) {
+        _showMessage('连接 OneDrive 失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConnectingOneDrive = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openOneDriveSettings() async {
+    if (_isConnectingOneDrive || _isSyncingOneDrive) {
+      return;
+    }
+
+    final defaults = _OneDriveConfigFormData(
+      remoteFolder: _oneDriveConfig?.remoteFolder ?? kOneDriveRemoteFolder,
+    );
+    final formData = await _showOneDriveConfigPage(defaults);
+    if (formData == null) {
+      return;
+    }
+
+    if (_oneDriveConfig == null) {
+      await _connectOneDrive(remoteFolder: formData.remoteFolder);
+      return;
+    }
+
+    final updated = _oneDriveConfig!.copyWith(
+      remoteFolder: formData.remoteFolder,
+    );
+    await widget.storage.saveOneDriveSyncConfig(updated);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _oneDriveConfig = updated;
+    });
+    _showMessage('OneDrive 远端目录已更新');
+  }
+
+  Future<void> _syncWithOneDrive() async {
+    if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
+      return;
+    }
+
+    setState(() {
+      _isSyncingOneDrive = true;
+    });
+
+    try {
+      final remoteSource = _oneDriveRemoteSource();
+      final executor = DiarySyncExecutor(
+        storage: widget.storage,
+        remoteSource: remoteSource,
+      );
+      final result = await executor.sync();
+      await _loadAppData();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (result.hasConflicts) {
+        await _handleSyncConflicts(
+          conflictPaths: result.conflictPaths,
+          remoteSource: remoteSource,
+          setSyncing: (value) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _isSyncingOneDrive = value;
+            });
+          },
+        );
+        return;
+      }
+
+      await _showSyncResultDialog(sourceLabel: 'OneDrive', result: result);
+    } on OneDriveAuthException catch (error) {
+      if (mounted) {
+        _showMessage(error.message);
+      }
+    } catch (error) {
+      if (mounted) {
+        _showMessage('OneDrive 同步失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSyncingOneDrive = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _disconnectOneDrive() async {
+    if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('断开 OneDrive'),
+          content: const Text('这只会移除当前设备上的 OneDrive 登录状态，不会删除本地数据或云端文件。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('断开'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    await _oneDriveAuthService().disconnect();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _oneDriveConfig = null;
+    });
+    _showMessage('已断开 OneDrive');
+  }
+
   Future<void> _openJianguoyunSettings() async {
     if (_isEditingJianguoyun || _isSyncingJianguoyun) {
       return;
@@ -594,13 +789,22 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
 
       if (result.hasConflicts) {
-        await _handleSyncConflicts(result.conflictPaths);
+        await _handleSyncConflicts(
+          conflictPaths: result.conflictPaths,
+          remoteSource: remoteSource,
+          setSyncing: (value) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _isSyncingJianguoyun = value;
+            });
+          },
+        );
         return;
       }
 
-      final summary =
-          '同步完成：上传 ${result.uploadedPaths.length}，下载 ${result.downloadedPaths.length}，远端删除 ${result.deletedRemotePaths.length}，本地删除 ${result.deletedLocalPaths.length}';
-      _showMessage(summary);
+      await _showSyncResultDialog(sourceLabel: '坚果云', result: result);
     } on WebDavSyncException catch (error) {
       if (mounted) {
         _showMessage(error.message);
@@ -618,7 +822,11 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
   }
 
-  Future<void> _handleSyncConflicts(List<String> conflictPaths) async {
+  Future<void> _handleSyncConflicts({
+    required List<String> conflictPaths,
+    required DiarySyncRemoteSource remoteSource,
+    required void Function(bool value) setSyncing,
+  }) async {
     final result = await Navigator.of(context).push<SyncConflictResolutionResult>(
       MaterialPageRoute(
         builder: (_) => SyncConflictPage(conflictPaths: conflictPaths),
@@ -629,14 +837,12 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return;
     }
 
-    setState(() {
-      _isSyncingJianguoyun = true;
-    });
+    setSyncing(true);
 
     try {
       final executor = DiarySyncExecutor(
         storage: widget.storage,
-        remoteSource: WebDavRemoteSource(storage: widget.storage),
+        remoteSource: remoteSource,
       );
       await executor.resolveConflicts(
         preferLocalByPath: {
@@ -649,6 +855,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         return;
       }
       _showMessage('已按你的选择处理冲突');
+    } on OneDriveAuthException catch (error) {
+      if (mounted) {
+        _showMessage(error.message);
+      }
     } on WebDavSyncException catch (error) {
       if (mounted) {
         _showMessage(error.message);
@@ -658,11 +868,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         _showMessage('处理冲突失败：' + error.toString());
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSyncingJianguoyun = false;
-        });
-      }
+      setSyncing(false);
     }
   }
 
@@ -672,11 +878,11 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
-          title: const Text('要先从坚果云恢复吗？'),
+          title: const Text('要先从 OneDrive 恢复吗？'),
           content: Text(
-            _jianguoyunConfig == null
-                ? '当前本地还是空的。你可以先连接坚果云并导入已有内容，也可以直接从本地开始。'
-                : '当前本地还是空的。你可以先从坚果云拉取已有数据，也可以直接从本地开始。',
+            _oneDriveConfig == null
+                ? '当前本地还是空的。你可以先连接 OneDrive 导入已有数据，也可以先从本地开始。'
+                : '当前本地还是空的。你可以先从 OneDrive 拉取已有数据，也可以直接从本地开始。',
           ),
           actions: [
             TextButton(
@@ -685,7 +891,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: Text(_jianguoyunConfig == null ? '连接并恢复' : '从坚果云恢复'),
+              child: Text(_oneDriveConfig == null ? '连接并恢复' : '从 OneDrive 恢复'),
             ),
           ],
         );
@@ -696,33 +902,32 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return;
     }
 
-    if (_jianguoyunConfig == null) {
-      await _openJianguoyunSettings();
-      if (!mounted || _jianguoyunConfig == null) {
-        _showMessage('还没有完成坚果云配置，先按本地开始。');
+    if (_oneDriveConfig == null) {
+      await _connectOneDrive();
+      if (!mounted || _oneDriveConfig == null) {
+        _showMessage('还没有完成 OneDrive 连接，先按本地开始。');
         return;
       }
     }
 
-    await _restoreFromJianguoyunAtStartup();
+    await _restoreFromOneDriveAtStartup();
   }
 
-
-  Future<void> _restoreFromJianguoyunAtStartup() async {
-    if (_jianguoyunConfig == null || _isSyncingJianguoyun) {
+  Future<void> _restoreFromOneDriveAtStartup() async {
+    if (_oneDriveConfig == null || _isSyncingOneDrive) {
       return;
     }
 
     setState(() {
-      _isSyncingJianguoyun = true;
+      _isSyncingOneDrive = true;
     });
 
     try {
-      final remoteSource = WebDavRemoteSource(storage: widget.storage);
+      final remoteSource = _oneDriveRemoteSource();
       final snapshot = await remoteSource.fetchSnapshot();
       if (snapshot.files.isEmpty) {
         if (mounted) {
-          _showMessage('坚果云里还没有可恢复的数据。');
+          _showMessage('OneDrive 里还没有可恢复的数据。');
         }
         return;
       }
@@ -759,9 +964,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       await _loadAppData();
 
       if (mounted) {
-        _showMessage('已从坚果云恢复本地数据。');
+        _showMessage('已从 OneDrive 恢复本地数据。');
       }
-    } on WebDavSyncException catch (error) {
+    } on OneDriveAuthException catch (error) {
       if (mounted) {
         _showMessage(error.message);
       }
@@ -772,12 +977,11 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     } finally {
       if (mounted) {
         setState(() {
-          _isSyncingJianguoyun = false;
+          _isSyncingOneDrive = false;
         });
       }
     }
   }
-
   Future<void> _disconnectJianguoyun() async {
     if (_jianguoyunConfig == null || _isEditingJianguoyun || _isSyncingJianguoyun) {
       return;
@@ -829,8 +1033,75 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     );
   }
 
+  Future<_OneDriveConfigFormData?> _showOneDriveConfigPage(
+    _OneDriveConfigFormData defaults,
+  ) async {
+    return Navigator.of(context).push<_OneDriveConfigFormData>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _OneDriveConfigPage(defaults: defaults),
+      ),
+    );
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showSyncResultDialog({
+    required String sourceLabel,
+    required SyncExecutionResult result,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+
+    final changedPaths = <String>[
+      ...result.uploadedPaths.map((path) => '上传  $path'),
+      ...result.downloadedPaths.map((path) => '下载  $path'),
+      ...result.deletedRemotePaths.map((path) => '远端删除  $path'),
+      ...result.deletedLocalPaths.map((path) => '本地删除  $path'),
+    ];
+    final previewPaths = changedPaths.take(6).toList();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('$sourceLabel 同步完成'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '上传 ${result.uploadedPaths.length}，下载 ${result.downloadedPaths.length}，远端删除 ${result.deletedRemotePaths.length}，本地删除 ${result.deletedLocalPaths.length}',
+              ),
+              if (previewPaths.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('本次变更'),
+                const SizedBox(height: 8),
+                ...previewPaths.map(
+                  (path) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(path),
+                  ),
+                ),
+                if (changedPaths.length > previewPaths.length) ...[
+                  const SizedBox(height: 4),
+                  Text('还有 ${changedPaths.length - previewPaths.length} 项未展开'),
+                ],
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -869,12 +1140,19 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       RealUsTab(
         profile: _profile,
         entries: _entries,
+        oneDriveConfig: _oneDriveConfig,
         jianguoyunConfig: _jianguoyunConfig,
         lastSyncedAt: _lastSyncedAt,
+        isConnectingOneDrive: _isConnectingOneDrive,
+        isSyncingOneDrive: _isSyncingOneDrive,
         isEditingJianguoyun: _isEditingJianguoyun,
         isSyncingJianguoyun: _isSyncingJianguoyun,
         onEditProfile: () => _openProfileEditor(firstSetup: false),
         onOpenDustbin: _openDustbin,
+        onConnectOneDrive: _connectOneDrive,
+        onOpenOneDriveSettings: _openOneDriveSettings,
+        onSyncOneDrive: _syncWithOneDrive,
+        onDisconnectOneDrive: _disconnectOneDrive,
         onOpenJianguoyunSettings: _openJianguoyunSettings,
         onSyncJianguoyun: _syncWithJianguoyun,
         onDisconnectJianguoyun: _disconnectJianguoyun,
@@ -1266,10 +1544,10 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
               children: [
               DiaryHero(
                 eyebrow: widget.isFirstSetup ? '初始设置' : '编辑资料',
-                title: widget.isFirstSetup ? '先把故事起个头' : '更新你们的资料',
+                title: widget.isFirstSetup ? '先把资料填好' : '更新资料',
                 subtitle: widget.isFirstSetup
                     ? '把名字和在一起的日期填好，首页和统计会自动带上这些信息。'
-                    : '这些信息会同步影响首页展示、统计和纪念日标记。',
+                    : '这些信息会影响首页展示、统计和纪念日标记。',
               ),
               const SizedBox(height: 20),
               DiaryPanel(
@@ -2030,10 +2308,10 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
               children: [
                 DiaryHero(
                   eyebrow: _isEditMode ? '编辑日记' : '新建日记',
-                  title: _isEditMode ? '把这篇日记调整完整' : '记录今天的小瞬间',
+                  title: _isEditMode ? '编辑这篇日记' : '写一篇新日记',
                   subtitle: _isEditMode
                       ? '支持修改标题、内容、心情、日期和附图，保存后会回到时间线。'
-                      : '这条路径已经接通了草稿、本地保存、附图和评论，先把真实使用体验做顺。',
+                      : '支持草稿、本地保存、附图和评论。',
                 ),
                 const SizedBox(height: 20),
                 DiaryPanel(
@@ -2208,7 +2486,7 @@ class HeroHeader extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '把还来不及忘记的小瞬间，好好留下来。',
+            '把今天的内容记下来。',
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w800,
               height: 1.2,
@@ -2258,7 +2536,7 @@ class DraftHintCard extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              '这一版先把真实使用路径跑顺：引导、写日记、附图、评论、本地保存都已经接起来了。',
+              '支持日记、附图、评论和本地保存。',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                 color: DiaryPalette.wine,
                 height: 1.5,
@@ -2835,6 +3113,99 @@ class _JianguoyunConfigFormData {
   final String username;
   final String password;
   final String remoteFolder;
+}
+
+class _OneDriveConfigFormData {
+  const _OneDriveConfigFormData({required this.remoteFolder});
+
+  final String remoteFolder;
+}
+
+class _OneDriveConfigPage extends StatefulWidget {
+  const _OneDriveConfigPage({required this.defaults});
+
+  final _OneDriveConfigFormData defaults;
+
+  @override
+  State<_OneDriveConfigPage> createState() => _OneDriveConfigPageState();
+}
+
+class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
+  late final TextEditingController _remoteFolderController;
+
+  @override
+  void initState() {
+    super.initState();
+    _remoteFolderController = TextEditingController(
+      text: widget.defaults.remoteFolder,
+    );
+  }
+
+  @override
+  void dispose() {
+    _remoteFolderController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('OneDrive 设置'),
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ),
+      body: DiaryPage(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const DiaryHero(
+              eyebrow: '同步设置',
+              title: '调整 OneDrive 远端目录',
+              subtitle: '这个目录会作为当前设备在 OneDrive App Folder 下的同步位置。',
+            ),
+            const SizedBox(height: 20),
+            DiaryPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _remoteFolderController,
+                    decoration: const InputDecoration(
+                      labelText: '远端目录',
+                      hintText: '默认是 love_diary',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '建议使用固定目录名，避免不同设备同步到不同位置。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () {
+                final remoteFolder = _remoteFolderController.text.trim().isEmpty
+                    ? 'love_diary'
+                    : _remoteFolderController.text.trim();
+                Navigator.of(
+                  context,
+                ).pop(_OneDriveConfigFormData(remoteFolder: remoteFolder));
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _JianguoyunConfigPage extends StatefulWidget {

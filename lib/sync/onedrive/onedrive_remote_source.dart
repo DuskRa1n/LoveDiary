@@ -16,6 +16,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   final OneDriveAuthService authService;
 
   @override
+  Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
+
+  @override
   Future<RemoteSyncSnapshot> fetchSnapshot() async {
     final config = await authService.requireConfig();
     final accessToken = await authService.getValidAccessToken();
@@ -66,6 +69,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         uri: _buildPathUri(config.remoteFolder, relativePath, suffix: 'content'),
         accessToken: accessToken,
         bytes: bytes,
+        isBinary: isBinary,
       );
       return;
     }
@@ -137,13 +141,35 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   }) async {
     final config = await authService.requireConfig();
     final accessToken = await authService.getValidAccessToken();
-    final response = await _sendRequest(
+    final metadataResponse = await _sendRequest(
       method: 'GET',
-      uri: _buildPathUri(config.remoteFolder, relativePath, suffix: 'content'),
+      uri: _buildPathUri(config.remoteFolder, relativePath),
       accessToken: accessToken,
     );
+    final metadataPayload = _decodeJson(metadataResponse.body);
+    if (metadataResponse.statusCode < 200 || metadataResponse.statusCode >= 300) {
+      throw OneDriveAuthException(
+        metadataPayload['error']?['message'] as String? ??
+            'Failed to read OneDrive metadata for $relativePath.',
+      );
+    }
+
+    final downloadUrl =
+        metadataPayload['@microsoft.graph.downloadUrl'] as String?;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      throw OneDriveAuthException(
+        'OneDrive did not return a download url for $relativePath.',
+      );
+    }
+
+    final response = await _sendAbsoluteRequest(
+      method: 'GET',
+      uri: Uri.parse(downloadUrl),
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw OneDriveAuthException('Failed to download $relativePath from OneDrive.');
+      throw OneDriveAuthException(
+        'Failed to download $relativePath from OneDrive.',
+      );
     }
 
     final targetFile = File(targetAbsolutePath);
@@ -384,11 +410,18 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required Uri uri,
     required String accessToken,
     required List<int> bytes,
+    required bool isBinary,
   }) async {
     final response = await _sendRequest(
       method: 'PUT',
       uri: uri,
       accessToken: accessToken,
+      headers: {
+        HttpHeaders.contentLengthHeader: bytes.length.toString(),
+        HttpHeaders.contentTypeHeader: isBinary
+            ? 'application/octet-stream'
+            : 'application/json; charset=utf-8',
+      },
       body: bytes,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -430,6 +463,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       final request = await client.openUrl(method, uri);
       headers?.forEach(request.headers.set);
       if (body != null && body.isNotEmpty) {
+        if (!request.headers.chunkedTransferEncoding) {
+          request.contentLength = body.length;
+        }
         request.add(body);
       }
       final response = await request.close();
