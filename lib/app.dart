@@ -1,4 +1,5 @@
-﻿import 'dart:io';
+﻿import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -154,6 +155,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   bool _hasHandledStartupRecovery = false;
   int _currentIndex = 0;
   DateTime? _lastSyncedAt;
+  double? _oneDriveSyncProgress;
+  String? _oneDriveSyncLabel;
+  double? _jianguoyunSyncProgress;
+  String? _jianguoyunSyncLabel;
   OneDriveSyncConfig? _oneDriveConfig;
   WebDavSyncConfig? _jianguoyunConfig;
   String? _storageRootPath;
@@ -443,6 +448,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
     final message = initialEntry == null ? '日记已保存到本地' : '日记已更新';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    unawaited(_triggerAutoSync(reason: initialEntry == null ? '发布日记' : '更新日记'));
     return savedEntry;
   }
 
@@ -462,6 +468,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     });
     await widget.storage.saveEntry(updatedEntry);
     await _reloadEntries();
+    unawaited(_triggerAutoSync(reason: '发表评论'));
     return updatedEntry;
   }
 
@@ -472,6 +479,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   Future<void> _deleteEntry(DiaryEntry entry) async {
     await widget.storage.deleteEntry(entry);
     await _reloadEntries();
+    unawaited(_triggerAutoSync(reason: '删除日记'));
 
     if (!mounted) {
       return;
@@ -519,6 +527,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => EntryDetailPage(
+          profile: _profile,
           entry: entry,
           rootDirectoryPath: _storageRootPath,
           onAddComment: _addComment,
@@ -819,6 +828,21 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           _isSyncingJianguoyun = false;
         });
       }
+    }
+  }
+
+  Future<void> _triggerAutoSync({required String reason}) async {
+    if (_isConnectingOneDrive || _isSyncingOneDrive || _isEditingJianguoyun || _isSyncingJianguoyun) {
+      return;
+    }
+
+    if (_oneDriveConfig != null) {
+      await _syncWithOneDrive();
+      return;
+    }
+
+    if (_jianguoyunConfig != null) {
+      await _syncWithJianguoyun();
     }
   }
 
@@ -1465,6 +1489,7 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
   late final TextEditingController _maleNameController;
   late final TextEditingController _femaleNameController;
   late DateTime _togetherSince;
+  late String _currentUserRole;
 
   @override
   void initState() {
@@ -1476,6 +1501,7 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
       text: widget.initialProfile.femaleName,
     );
     _togetherSince = widget.initialProfile.togetherSince;
+    _currentUserRole = widget.initialProfile.currentUserRole;
   }
 
   @override
@@ -1513,6 +1539,7 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
     final profile = widget.initialProfile.copyWith(
       maleName: _maleNameController.text.trim(),
       femaleName: _femaleNameController.text.trim(),
+      currentUserRole: _currentUserRole,
       togetherSince: _togetherSince,
       isOnboarded: true,
     );
@@ -1566,6 +1593,19 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
                       validator: _nonEmptyValidator,
                     ),
                     const SizedBox(height: 16),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment<String>(value: 'male', label: Text('我是他')),
+                        ButtonSegment<String>(value: 'female', label: Text('我是她')),
+                      ],
+                      selected: {_currentUserRole},
+                      onSelectionChanged: (selection) {
+                        setState(() {
+                          _currentUserRole = selection.first;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
                     OutlinedButton.icon(
                       onPressed: _pickTogetherSince,
                       icon: const Icon(Icons.favorite_rounded),
@@ -1598,6 +1638,7 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
 class EntryDetailPage extends StatefulWidget {
   const EntryDetailPage({
     super.key,
+    required this.profile,
     required this.entry,
     required this.rootDirectoryPath,
     required this.onAddComment,
@@ -1605,6 +1646,7 @@ class EntryDetailPage extends StatefulWidget {
     required this.onDeleteEntry,
   });
 
+  final CoupleProfile profile;
   final DiaryEntry entry;
   final String? rootDirectoryPath;
   final Future<DiaryEntry> Function(String entryId, DiaryComment comment)
@@ -1621,12 +1663,13 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
 
   late DiaryEntry _entry;
   bool _isSavingComment = false;
-  String _selectedAuthor = '你';
+  late String _selectedAuthor;
 
   @override
   void initState() {
     super.initState();
     _entry = widget.entry;
+    _selectedAuthor = widget.profile.currentUserPronoun;
   }
 
   @override
@@ -1798,7 +1841,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                   Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: ['你', '她'].map((author) {
+                    children: [widget.profile.currentUserPronoun, widget.profile.partnerPronoun].map((author) {
                       return ChoiceChip(
                         label: Text(author),
                         selected: _selectedAuthor == author,
@@ -3026,7 +3069,7 @@ class CommentCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  formatDiaryShortDate(comment.createdAt),
+                  '${formatDiaryShortDate(comment.createdAt)} ${formatDiaryTime(comment.createdAt)}',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: DiaryPalette.wine,
                   ),
@@ -3331,6 +3374,17 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
     );
   }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

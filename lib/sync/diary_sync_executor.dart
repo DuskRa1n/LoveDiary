@@ -27,14 +27,18 @@ class DiarySyncExecutor {
   const DiarySyncExecutor({
     required this.storage,
     required this.remoteSource,
+    this.onProgress,
   });
 
   final DiaryStorage storage;
   final DiarySyncRemoteSource remoteSource;
+  final void Function(double progress, String label)? onProgress;
 
   Future<SyncExecutionResult> sync() async {
+    onProgress?.call(0.1, '正在检查本地和云端差异');
     final planner = DiarySyncService(storage: storage, remoteSource: remoteSource);
     final plan = await planner.buildPlan();
+    onProgress?.call(0.3, '同步计划已生成');
 
     final uploadedPaths = <String>[];
     final downloadedPaths = <String>[];
@@ -46,6 +50,7 @@ class DiarySyncExecutor {
         .toList();
 
     if (conflictPaths.isNotEmpty) {
+      onProgress?.call(1, '发现同步冲突');
       return SyncExecutionResult(
         uploadedPaths: uploadedPaths,
         downloadedPaths: downloadedPaths,
@@ -66,7 +71,11 @@ class DiarySyncExecutor {
       return a.relativePath.compareTo(b.relativePath);
     });
 
-    for (final action in sortedActions) {
+    final totalActionCount = sortedActions.isEmpty ? 1 : sortedActions.length;
+    for (var index = 0; index < sortedActions.length; index++) {
+      final action = sortedActions[index];
+      final progress = 0.35 + ((index + 1) / totalActionCount) * 0.45;
+      onProgress?.call(progress, _labelForAction(action));
       switch (action.type) {
         case SyncActionType.upload:
           final localFile = localByPath[action.relativePath];
@@ -105,7 +114,9 @@ class DiarySyncExecutor {
       }
     }
 
+    onProgress?.call(0.9, '正在刷新同步状态');
     await _refreshSyncState(deletedRemotePaths: deletedRemotePaths);
+    onProgress?.call(1, '同步完成');
 
     return SyncExecutionResult(
       uploadedPaths: uploadedPaths,
@@ -167,6 +178,21 @@ class DiarySyncExecutor {
         return 3;
       case SyncActionType.conflict:
         return 4;
+    }
+  }
+
+  String _labelForAction(SyncAction action) {
+    switch (action.type) {
+      case SyncActionType.upload:
+        return '正在上传 ${action.relativePath}';
+      case SyncActionType.download:
+        return '正在下载 ${action.relativePath}';
+      case SyncActionType.deleteRemote:
+        return '正在删除云端文件 ${action.relativePath}';
+      case SyncActionType.deleteLocal:
+        return '正在清理本地文件 ${action.relativePath}';
+      case SyncActionType.conflict:
+        return '正在处理冲突 ${action.relativePath}';
     }
   }
 

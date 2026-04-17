@@ -66,7 +66,7 @@ class RealUsTab extends StatelessWidget {
         children: [
           DiaryHero(
             eyebrow: '我们',
-            title: '${profile.maleName} 和 ${profile.femaleName}',
+            title: '${profile.currentUserName} 和 ${profile.partnerName}',
             subtitle: '资料、同步和统计都放在这里。',
             footer: Wrap(
               spacing: 10,
@@ -74,24 +74,24 @@ class RealUsTab extends StatelessWidget {
               children: [
                 DiaryBadge(label: '在一起 $togetherDays 天'),
                 DiaryBadge(
+                  label: '${profile.currentUserPronoun} · ${profile.currentUserName}',
+                  tone: DiaryBadgeTone.ink,
+                ),
+                DiaryBadge(
+                  label: '${profile.partnerPronoun} · ${profile.partnerName}',
+                  tone: DiaryBadgeTone.ink,
+                ),
+                DiaryBadge(
                   label: '纪念日 ${formatDiaryShortDate(profile.togetherSince)}',
                   tone: DiaryBadgeTone.sand,
-                ),
-                DiaryBadge(
-                  label: '他 · ${profile.maleName}',
-                  tone: DiaryBadgeTone.ink,
-                ),
-                DiaryBadge(
-                  label: '她 · ${profile.femaleName}',
-                  tone: DiaryBadgeTone.ink,
                 ),
               ],
             ),
           ),
           const SizedBox(height: 22),
           const DiarySectionHeader(
-            title: '资料与回收站',
-            subtitle: '资料维护和误删恢复入口。',
+            title: '资料与数据',
+            subtitle: '管理资料、回收站和本地数据。',
           ),
           const SizedBox(height: 14),
           DiaryPanel(
@@ -100,15 +100,15 @@ class RealUsTab extends StatelessWidget {
                 DiaryActionRow(
                   icon: Icons.edit_rounded,
                   title: '编辑资料',
-                  subtitle: '修改名字、纪念日和首页展示信息。',
+                  subtitle: '修改名字、纪念日和称呼基调。',
                   onTap: onEditProfile,
                 ),
                 const Divider(height: 20, color: DiaryPalette.line),
                 DiaryActionRow(
                   icon: Icons.restore_from_trash_rounded,
                   title: '回收站',
-                  subtitle: '已删除的日记会先放在这里，7 天后才会彻底清理。',
-                  onTap: onOpenDustbin,
+                  subtitle: '已删除的日记会先放这里，7 天后再彻底清理。',
+                  onTap: () => onOpenDustbin(),
                 ),
               ],
             ),
@@ -116,7 +116,7 @@ class RealUsTab extends StatelessWidget {
           const SizedBox(height: 22),
           const DiarySectionHeader(
             title: 'OneDrive',
-            subtitle: '主同步通道。可以改远端目录，也可以重新授权。',
+            subtitle: '主同步通道。',
           ),
           const SizedBox(height: 14),
           DiaryPanel(
@@ -127,7 +127,9 @@ class RealUsTab extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    DiaryBadge(label: oneDriveConfig == null ? '未连接' : '已连接'),
+                    DiaryBadge(
+                      label: oneDriveConfig == null ? '未连接' : '已连接',
+                    ),
                     if (oneDriveConfig?.accountEmail case final email?)
                       DiaryBadge(label: email, tone: DiaryBadgeTone.ink),
                   ],
@@ -189,13 +191,24 @@ class RealUsTab extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (isSyncingOneDrive) ...[
+                  const SizedBox(height: 14),
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 8),
+                  Text(
+                    '正在同步 OneDrive...',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 22),
           const DiarySectionHeader(
             title: '坚果云',
-            subtitle: '保留为备选同步方案。',
+            subtitle: '备选同步通道。',
           ),
           const SizedBox(height: 14),
           DiaryPanel(
@@ -206,7 +219,9 @@ class RealUsTab extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    DiaryBadge(label: jianguoyunConfig == null ? '未连接' : '已连接'),
+                    DiaryBadge(
+                      label: jianguoyunConfig == null ? '未连接' : '已连接',
+                    ),
                     if (jianguoyunConfig != null)
                       DiaryBadge(
                         label: jianguoyunConfig!.username,
@@ -242,7 +257,7 @@ class RealUsTab extends StatelessWidget {
                       label: Text(
                         jianguoyunConfig == null
                             ? (isEditingJianguoyun ? '配置中...' : '配置坚果云')
-                            : (isSyncingJianguoyun ? '同步中...' : '用坚果云同步'),
+                            : (isSyncingJianguoyun ? '同步中...' : '立即同步'),
                       ),
                     ),
                     if (jianguoyunConfig != null)
@@ -251,7 +266,7 @@ class RealUsTab extends StatelessWidget {
                             ? null
                             : onOpenJianguoyunSettings,
                         icon: const Icon(Icons.tune_rounded),
-                        label: const Text('修改配置'),
+                        label: const Text('修改设置'),
                       ),
                     if (jianguoyunConfig != null)
                       OutlinedButton.icon(
@@ -263,13 +278,24 @@ class RealUsTab extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (isSyncingJianguoyun) ...[
+                  const SizedBox(height: 14),
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 8),
+                  Text(
+                    '正在同步坚果云...',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 22),
           const DiarySectionHeader(
             title: '统计',
-            subtitle: '当前本地数据汇总。',
+            subtitle: '当前本地数据概览。',
           ),
           const SizedBox(height: 14),
           GridView.count(

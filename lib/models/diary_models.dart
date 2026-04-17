@@ -19,7 +19,7 @@ class DiaryComment {
 
   factory DiaryComment.fromJson(Map<String, dynamic> json) {
     return DiaryComment(
-      author: json['author'] as String? ?? '我',
+      author: json['author'] as String? ?? '评论人',
       content: json['content'] as String? ?? '',
       createdAt: DateTime.parse(json['created_at'] as String),
     );
@@ -78,24 +78,34 @@ class CoupleProfile {
   const CoupleProfile({
     required this.maleName,
     required this.femaleName,
+    this.currentUserRole = 'male',
     required this.togetherSince,
     required this.isOnboarded,
   });
 
   final String maleName;
   final String femaleName;
+  final String currentUserRole;
   final DateTime togetherSince;
   final bool isOnboarded;
+
+  bool get isCurrentUserMale => currentUserRole != 'female';
+  String get currentUserPronoun => isCurrentUserMale ? '他' : '她';
+  String get partnerPronoun => isCurrentUserMale ? '她' : '他';
+  String get currentUserName => isCurrentUserMale ? maleName : femaleName;
+  String get partnerName => isCurrentUserMale ? femaleName : maleName;
 
   CoupleProfile copyWith({
     String? maleName,
     String? femaleName,
+    String? currentUserRole,
     DateTime? togetherSince,
     bool? isOnboarded,
   }) {
     return CoupleProfile(
       maleName: maleName ?? this.maleName,
       femaleName: femaleName ?? this.femaleName,
+      currentUserRole: currentUserRole ?? this.currentUserRole,
       togetherSince: togetherSince ?? this.togetherSince,
       isOnboarded: isOnboarded ?? this.isOnboarded,
     );
@@ -105,6 +115,7 @@ class CoupleProfile {
     return {
       'male_name': maleName,
       'female_name': femaleName,
+      'current_user_role': currentUserRole,
       'together_since': togetherSince.toIso8601String(),
       'is_onboarded': isOnboarded,
     };
@@ -120,6 +131,9 @@ class CoupleProfile {
           json['female_name'] as String? ??
           json['partner_name'] as String? ??
           '她',
+      currentUserRole: (json['current_user_role'] as String?) == 'female'
+          ? 'female'
+          : 'male',
       togetherSince: DateTime.parse(
         json['together_since'] as String? ?? DateTime.now().toIso8601String(),
       ),

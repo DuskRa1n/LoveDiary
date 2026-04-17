@@ -28,9 +28,9 @@ class RealTodayTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DiaryHero(
-            eyebrow: '今天',
-            title: '${profile.maleName} 和 ${profile.femaleName}',
-            subtitle: '最近写下来的日记。',
+            eyebrow: '首页',
+            title: '${profile.currentUserName}和${profile.partnerName}',
+            subtitle: '把今天值得记住的小事留在这里。日子不一定轰轰烈烈，但回头看时，会发现每一篇都很重要。',
             trailing: Container(
               width: 78,
               height: 78,
@@ -53,7 +53,7 @@ class RealTodayTab extends StatelessWidget {
               children: [
                 DiaryBadge(label: '在一起 $togetherDays 天'),
                 DiaryBadge(
-                  label: '共 ${entries.length} 篇日记',
+                  label: '${entries.length} 篇日记',
                   tone: DiaryBadgeTone.ink,
                 ),
                 DiaryBadge(
@@ -65,14 +65,14 @@ class RealTodayTab extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           const DiarySectionHeader(
-            title: '最近记录',
-            subtitle: '按时间倒序显示。',
+            title: '最近日记',
+            subtitle: '按创建时间倒序显示。',
           ),
           const SizedBox(height: 14),
           if (latestEntries.isEmpty)
             const DiaryEmptyState(
               title: '还没有日记',
-              subtitle: '点右下角开始写。',
+              subtitle: '先写第一篇，再回来这里看最近记录。',
             )
           else
             ...latestEntries.map(

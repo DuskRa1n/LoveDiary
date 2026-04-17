@@ -68,7 +68,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
       builder: (context) {
         return AlertDialog(
           title: const Text('删除这篇日记？'),
-          content: Text('《${entry.title}》会先进入回收站，7 天内都还能恢复。'),
+          content: Text('《${entry.title}》会先进入回收站。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -114,15 +114,15 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
           DiaryHero(
             eyebrow: '时间线',
             title: '所有日记',
-            subtitle: '筛选和查看所有内容。',
+            subtitle: '按关键词、心情和日期筛选。默认按时间倒序。',
             footer: Wrap(
               spacing: 10,
               runSpacing: 10,
               children: [
-                DiaryBadge(label: '共 ${widget.entries.length} 篇'),
+                DiaryBadge(label: '${widget.entries.length} 篇'),
                 if (_selectedMood != null)
                   DiaryBadge(
-                    label: '心情 $_selectedMood',
+                    label: _selectedMood!,
                     tone: DiaryBadgeTone.sand,
                   ),
                 if (_selectedDate != null)
@@ -140,7 +140,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
               children: [
                 const DiarySectionHeader(
                   title: '筛选',
-                  subtitle: '按关键词、心情和日期筛选。',
+                  subtitle: '支持标题、正文、心情和日期过滤。',
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -221,19 +221,19 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
                 ? '全部日记'
                 : '筛选结果',
             subtitle: query.isEmpty && _selectedMood == null && _selectedDate == null
-                ? '按时间倒序显示。'
-                : '共 ${filteredEntries.length} 篇。',
+                ? '最近写下来的内容排在前面。'
+                : '共 ${filteredEntries.length} 篇',
           ),
           const SizedBox(height: 14),
           if (widget.entries.isEmpty)
             const DiaryEmptyState(
               title: '还没有日记',
-              subtitle: '先写一篇。',
+              subtitle: '先写一篇，时间线就会从这里开始。',
             )
           else if (filteredEntries.isEmpty)
             const DiaryEmptyState(
               title: '没有匹配结果',
-              subtitle: '换个关键词，或者清空筛选条件。',
+              subtitle: '换一个关键词，或者清空筛选后再看。',
             )
           else
             ...filteredEntries.map(

@@ -34,26 +34,17 @@ class DiaryPage extends StatelessWidget {
         const Positioned(
           left: -56,
           top: -10,
-          child: _BackdropBlob(
-            size: 164,
-            color: Color(0xFFF0D6DF),
-          ),
+          child: _BackdropBlob(size: 164, color: Color(0xFFF0D6DF)),
         ),
         const Positioned(
           right: -42,
           top: 118,
-          child: _BackdropBlob(
-            size: 132,
-            color: Color(0xFFECDDC9),
-          ),
+          child: _BackdropBlob(size: 132, color: Color(0xFFECDDC9)),
         ),
         const Positioned(
           right: 24,
           bottom: 88,
-          child: _BackdropBlob(
-            size: 92,
-            color: Color(0xFFF6E7ED),
-          ),
+          child: _BackdropBlob(size: 92, color: Color(0xFFF6E7ED)),
         ),
         ListView(
           padding: padding,
@@ -395,7 +386,7 @@ class _DiaryCoverPlaceholder extends StatelessWidget {
           if (count > 0) ...[
             const SizedBox(height: 8),
             Text(
-              '$count 张图',
+              '$count 张图片',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
                 color: DiaryPalette.rose,
                 fontWeight: FontWeight.w700,
