@@ -45,8 +45,12 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
     super.dispose();
   }
 
+  String _normalizedRemoteFolder() {
+    final value = _remoteFolderController.text.trim();
+    return value.isEmpty ? 'love_diary' : value;
+  }
+
   Future<void> _startFlow() async {
-    final remoteFolder = _normalizedRemoteFolder();
     setState(() {
       _isLoading = true;
       _error = null;
@@ -57,7 +61,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       final session = await widget.authService.startDeviceCodeFlow(
         clientId: widget.clientId,
         tenant: widget.tenant,
-        remoteFolder: remoteFolder,
+        remoteFolder: _normalizedRemoteFolder(),
       );
       if (!mounted) {
         return;
@@ -67,19 +71,17 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       });
       await _openVerificationPage(session, silentFailure: true);
     } on OneDriveAuthException catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _error = error.message;
+        });
       }
-      setState(() {
-        _error = error.message;
-      });
     } catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _error = '连接 OneDrive 失败：$error';
+        });
       }
-      setState(() {
-        _error = '获取 OneDrive 授权信息失败：$error';
-      });
     } finally {
       if (mounted) {
         setState(() {
@@ -89,18 +91,13 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
     }
   }
 
-  String _normalizedRemoteFolder() {
-    final value = _remoteFolderController.text.trim();
-    return value.isEmpty ? 'love_diary' : value;
-  }
-
   Future<void> _copy(String label, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制$label')),
+      SnackBar(content: Text('$label 已复制')),
     );
   }
 
@@ -117,7 +114,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
     if (uri == null) {
       if (!silentFailure && mounted) {
         setState(() {
-          _error = 'OneDrive 返回的验证地址无效。';
+          _error = '验证地址无效，请手动复制地址到浏览器打开。';
         });
       }
       return;
@@ -134,7 +131,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       );
       if (!launched && !silentFailure && mounted) {
         setState(() {
-          _error = '无法打开浏览器，请手动复制地址继续授权。';
+          _error = '无法自动打开浏览器，请手动复制验证地址。';
         });
       }
     } catch (error) {
@@ -170,19 +167,17 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       }
       Navigator.of(context).pop(config);
     } on OneDriveAuthException catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _error = error.message;
+        });
       }
-      setState(() {
-        _error = error.message;
-      });
     } catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _error = '完成 OneDrive 授权失败：$error';
+        });
       }
-      setState(() {
-        _error = '完成 OneDrive 授权失败：$error';
-      });
     } finally {
       if (mounted) {
         setState(() {
@@ -206,8 +201,8 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
           children: [
             const DiaryHero(
               eyebrow: 'OneDrive',
-              title: '连接并设置 OneDrive',
-              subtitle: '先确认远端目录，再完成微软授权。授权成功后，这个目录会作为当前设备的 OneDrive 同步位置。',
+              title: '连接云端同步',
+              subtitle: '当前先使用设备码授权。完成登录后，日记会同步到 OneDrive 的应用专属目录。',
             ),
             const SizedBox(height: 22),
             DiaryPanel(
@@ -215,7 +210,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '同步设置',
+                    '同步目录',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           color: DiaryPalette.ink,
                           fontWeight: FontWeight.w800,
@@ -226,12 +221,12 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                     controller: _remoteFolderController,
                     decoration: const InputDecoration(
                       labelText: '远端目录',
-                      hintText: '默认是 love_diary',
+                      hintText: '默认 love_diary',
                     ),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    '建议不同设备使用同一个目录，这样才会同步到同一套数据。',
+                    '两台设备需要使用同一个目录名。建议先不要频繁切换目录。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: DiaryPalette.wine,
                         ),
@@ -240,7 +235,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                   FilledButton.icon(
                     onPressed: _isLoading || _isCompleting ? null : _startFlow,
                     icon: const Icon(Icons.login_rounded),
-                    label: Text(_isLoading ? '正在获取授权码...' : '开始授权'),
+                    label: Text(_isLoading ? '正在获取验证码...' : '开始授权'),
                   ),
                 ],
               ),
@@ -248,8 +243,8 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
             if (session != null) ...[
               const SizedBox(height: 22),
               const DiarySectionHeader(
-                title: '授权步骤',
-                subtitle: '如果浏览器没有自动打开，就按下面步骤继续。',
+                title: '完成授权',
+                subtitle: '先打开验证地址，输入验证码并登录微软账号，然后回到这里确认。',
               ),
               const SizedBox(height: 14),
               DiaryPanel(
@@ -258,7 +253,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                   children: [
                     _ConnectStep(
                       index: '1',
-                      title: '打开微软验证页',
+                      title: '打开验证地址',
                       body: session.verificationUri,
                       actionLabel: _isOpeningBrowser ? '正在打开...' : '打开浏览器',
                       onAction: _isOpeningBrowser
@@ -268,7 +263,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                     const Divider(height: 26, color: DiaryPalette.line),
                     _ConnectStep(
                       index: '2',
-                      title: '如果网页要求输入验证码',
+                      title: '输入验证码',
                       body: session.userCode,
                       actionLabel: '复制验证码',
                       onAction: () => _copy('验证码', session.userCode),
@@ -276,8 +271,8 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                     const Divider(height: 26, color: DiaryPalette.line),
                     _ConnectStep(
                       index: '3',
-                      title: '完成授权后回到这里',
-                      body: '微软授权完成后，点下面这个按钮继续。',
+                      title: '回到应用确认',
+                      body: '浏览器里显示授权完成后，再点击下面按钮继续。',
                       actionLabel: _isCompleting ? '正在确认...' : '我已完成授权',
                       onAction: _isCompleting ? null : _completeFlow,
                     ),
@@ -306,7 +301,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                   OutlinedButton.icon(
                     onPressed: _isLoading || _isCompleting ? null : _startFlow,
                     icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('重新获取授权码'),
+                    label: const Text('重新获取验证码'),
                   ),
                 TextButton(
                   onPressed:

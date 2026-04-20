@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -12,6 +13,8 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   static const _graphBaseUrl = 'https://graph.microsoft.com/v1.0';
   static const _simpleUploadLimitBytes = 4 * 1024 * 1024;
   static const _uploadChunkSize = 320 * 1024 * 10;
+  static const _maxRequestAttempts = 4;
+  static const _requestTimeout = Duration(seconds: 45);
 
   final OneDriveAuthService authService;
 
@@ -458,26 +461,53 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     Map<String, String>? headers,
     List<int>? body,
   }) async {
-    final client = HttpClient();
-    try {
-      final request = await client.openUrl(method, uri);
-      headers?.forEach(request.headers.set);
-      if (body != null && body.isNotEmpty) {
-        if (!request.headers.chunkedTransferEncoding) {
-          request.contentLength = body.length;
+    Object? lastError;
+
+    for (var attempt = 1; attempt <= _maxRequestAttempts; attempt++) {
+      final client = HttpClient()..connectionTimeout = _requestTimeout;
+      try {
+        final request = await client
+            .openUrl(method, uri)
+            .timeout(_requestTimeout);
+        headers?.forEach(request.headers.set);
+        if (body != null && body.isNotEmpty) {
+          if (!request.headers.chunkedTransferEncoding) {
+            request.contentLength = body.length;
+          }
+          request.add(body);
         }
-        request.add(body);
+        final response = await request.close().timeout(_requestTimeout);
+        final bytes = await _readResponseBytes(response).timeout(_requestTimeout);
+        final rawResponse = _RawResponse(
+          statusCode: response.statusCode,
+          body: utf8.decode(bytes, allowMalformed: true),
+          bytes: bytes,
+          retryAfter: _readRetryAfter(response),
+        );
+
+        if (_isRetryableStatus(rawResponse.statusCode) &&
+            attempt < _maxRequestAttempts) {
+          client.close(force: true);
+          await Future<void>.delayed(_retryDelay(attempt, rawResponse));
+          continue;
+        }
+
+        return rawResponse;
+      } catch (error) {
+        lastError = error;
+        if (!_isRetryableNetworkError(error) ||
+            attempt >= _maxRequestAttempts) {
+          throw OneDriveAuthException(_networkErrorMessage(uri, error));
+        }
+        await Future<void>.delayed(_retryDelay(attempt, null));
+      } finally {
+        client.close(force: true);
       }
-      final response = await request.close();
-      final bytes = await _readResponseBytes(response);
-      return _RawResponse(
-        statusCode: response.statusCode,
-        body: utf8.decode(bytes, allowMalformed: true),
-        bytes: bytes,
-      );
-    } finally {
-      client.close(force: true);
     }
+
+    throw OneDriveAuthException(
+      _networkErrorMessage(uri, lastError ?? 'unknown error'),
+    );
   }
 
   Future<Uint8List> _readResponseBytes(HttpClientResponse response) async {
@@ -494,6 +524,68 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     }
     return jsonDecode(body) as Map<String, dynamic>;
   }
+
+  bool _isRetryableStatus(int statusCode) {
+    return statusCode == 408 ||
+        statusCode == 429 ||
+        statusCode == 500 ||
+        statusCode == 502 ||
+        statusCode == 503 ||
+        statusCode == 504;
+  }
+
+  bool _isRetryableNetworkError(Object error) {
+    return error is SocketException ||
+        error is HttpException ||
+        error is TimeoutException ||
+        error is HandshakeException;
+  }
+
+  Duration _retryDelay(int attempt, _RawResponse? response) {
+    final retryAfter = response?.retryAfter;
+    if (retryAfter != null) {
+      return retryAfter;
+    }
+
+    final seconds = switch (attempt) {
+      1 => 2,
+      2 => 5,
+      _ => 10,
+    };
+    return Duration(seconds: seconds);
+  }
+
+  Duration? _readRetryAfter(HttpClientResponse response) {
+    final raw = response.headers.value(HttpHeaders.retryAfterHeader);
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+
+    final seconds = int.tryParse(raw.trim());
+    if (seconds != null) {
+      return Duration(seconds: seconds.clamp(1, 30).toInt());
+    }
+
+    final DateTime date;
+    try {
+      date = HttpDate.parse(raw);
+    } on FormatException {
+      return null;
+    }
+    final delay = date.difference(DateTime.now().toUtc());
+    if (delay.isNegative) {
+      return null;
+    }
+    return delay > const Duration(seconds: 30)
+        ? const Duration(seconds: 30)
+        : delay;
+  }
+
+  String _networkErrorMessage(Uri uri, Object error) {
+    return 'OneDrive 网络连接不稳定，已自动重试但仍失败。'
+        '请保持应用在前台，确认网络能访问 ${uri.host} 后再点“立即同步”。'
+        '原始错误：$error';
+  }
 }
 
 class _RawResponse {
@@ -501,9 +593,11 @@ class _RawResponse {
     required this.statusCode,
     required this.body,
     required this.bytes,
+    this.retryAfter,
   });
 
   final int statusCode;
   final String body;
   final Uint8List bytes;
+  final Duration? retryAfter;
 }

@@ -68,7 +68,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
       builder: (context) {
         return AlertDialog(
           title: const Text('删除这篇日记？'),
-          content: Text('《${entry.title}》会先进入回收站。'),
+          content: Text('《${entry.title}》会先进入回收站，7 天后才会彻底清理。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -103,18 +103,21 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
       final matchesMood =
           _selectedMood == null || entry.mood == _selectedMood;
       final matchesDate =
-          _selectedDate == null || isSameDiaryDay(entry.createdAt, _selectedDate!);
+          _selectedDate == null ||
+          isSameDiaryDay(entry.createdAt, _selectedDate!);
       return matchesQuery && matchesMood && matchesDate;
     }).toList();
+    final hasFilter =
+        query.isNotEmpty || _selectedMood != null || _selectedDate != null;
 
     return DiaryPage(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DiaryHero(
-            eyebrow: '时间线',
-            title: '所有日记',
-            subtitle: '按关键词、心情和日期筛选。默认按时间倒序。',
+            eyebrow: '回忆',
+            title: '时光轴',
+            subtitle: '所有日记',
             footer: Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -134,101 +137,33 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
             ),
           ),
           const SizedBox(height: 22),
-          DiaryPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const DiarySectionHeader(
-                  title: '筛选',
-                  subtitle: '支持标题、正文、心情和日期过滤。',
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: '搜索标题或正文',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _searchController.text.isEmpty
-                        ? null
-                        : IconButton(
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilterChip(
-                      label: const Text('全部心情'),
-                      selected: _selectedMood == null,
-                      onSelected: (_) {
-                        setState(() {
-                          _selectedMood = null;
-                        });
-                      },
-                    ),
-                    ...moods.map(
-                      (mood) => FilterChip(
-                        label: Text(mood),
-                        selected: _selectedMood == mood,
-                        onSelected: (_) {
-                          setState(() {
-                            _selectedMood = mood;
-                          });
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _pickDate,
-                        icon: const Icon(Icons.calendar_month_rounded),
-                        label: Text(
-                          _selectedDate == null
-                              ? '选择日期'
-                              : formatDiaryShortDate(_selectedDate!),
-                        ),
-                      ),
-                    ),
-                    if (query.isNotEmpty ||
-                        _selectedMood != null ||
-                        _selectedDate != null) ...[
-                      const SizedBox(width: 10),
-                      TextButton(
-                        onPressed: _clearFilters,
-                        child: const Text('清空'),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
+          _TimelineFilterPanel(
+            controller: _searchController,
+            moods: moods,
+            selectedMood: _selectedMood,
+            selectedDate: _selectedDate,
+            hasFilter: hasFilter,
+            onQueryChanged: () => setState(() {}),
+            onMoodSelected: (mood) {
+              setState(() {
+                _selectedMood = mood;
+              });
+            },
+            onPickDate: _pickDate,
+            onClear: _clearFilters,
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
           DiarySectionHeader(
-            title: query.isEmpty && _selectedMood == null && _selectedDate == null
-                ? '全部日记'
-                : '筛选结果',
-            subtitle: query.isEmpty && _selectedMood == null && _selectedDate == null
-                ? '最近写下来的内容排在前面。'
-                : '共 ${filteredEntries.length} 篇',
+            title: hasFilter ? '筛选结果' : '日记目录',
+            subtitle: hasFilter
+                ? '找到 ${filteredEntries.length} 篇符合条件的记录。'
+                : '最近写下的内容排在最前面。',
           ),
           const SizedBox(height: 14),
           if (widget.entries.isEmpty)
             const DiaryEmptyState(
               title: '还没有日记',
-              subtitle: '先写一篇，时间线就会从这里开始。',
+              subtitle: '第一篇写下后，时间线会从这里开始。',
             )
           else if (filteredEntries.isEmpty)
             const DiaryEmptyState(
@@ -236,20 +171,284 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
               subtitle: '换一个关键词，或者清空筛选后再看。',
             )
           else
-            ...filteredEntries.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: _TimelineEntryCard(
-                  entry: entry,
-                  rootDirectoryPath: widget.rootDirectoryPath,
-                  onTap: () => widget.onOpenEntry(entry),
-                  onEdit: () => widget.onEditEntry(entry),
-                  onDelete: () => _confirmDelete(entry),
-                ),
+            ...filteredEntries.asMap().entries.map(
+              (item) => _TimelineEntryRow(
+                entry: item.value,
+                rootDirectoryPath: widget.rootDirectoryPath,
+                isFirst: item.key == 0,
+                isLast: item.key == filteredEntries.length - 1,
+                onTap: () => widget.onOpenEntry(item.value),
+                onEdit: () => widget.onEditEntry(item.value),
+                onDelete: () => _confirmDelete(item.value),
               ),
             ),
         ],
       ),
+    );
+  }
+}
+
+class _TimelineFilterPanel extends StatelessWidget {
+  const _TimelineFilterPanel({
+    required this.controller,
+    required this.moods,
+    required this.selectedMood,
+    required this.selectedDate,
+    required this.hasFilter,
+    required this.onQueryChanged,
+    required this.onMoodSelected,
+    required this.onPickDate,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final List<String> moods;
+  final String? selectedMood;
+  final DateTime? selectedDate;
+  final bool hasFilter;
+  final VoidCallback onQueryChanged;
+  final ValueChanged<String?> onMoodSelected;
+  final VoidCallback onPickDate;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return DiaryPanel(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                hintText: '搜索日记...',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          controller.clear();
+                          onQueryChanged();
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+            ),
+              onChanged: (_) => onQueryChanged(),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton.tonalIcon(
+            onPressed: () => _openFilterSheet(context),
+            icon: const Icon(Icons.tune_rounded),
+            label: const Text('筛选'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openFilterSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '筛选日记',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: DiaryPalette.ink,
+                        fontWeight: FontWeight.w900,
+                      ),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('全部心情'),
+                      selected: selectedMood == null,
+                      onSelected: (_) {
+                        onMoodSelected(null);
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                    ...moods.map(
+                      (mood) => ChoiceChip(
+                        label: Text(mood),
+                        selected: selectedMood == mood,
+                        onSelected: (_) {
+                          onMoodSelected(mood);
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    onPickDate();
+                  },
+                  icon: const Icon(Icons.calendar_month_rounded),
+                  label: Text(
+                    selectedDate == null
+                        ? '选择日期'
+                        : formatDiaryDate(selectedDate!),
+                  ),
+                ),
+                if (hasFilter) ...[
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () {
+                      onClear();
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('清空筛选'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TimelineEntryRow extends StatelessWidget {
+  const _TimelineEntryRow({
+    required this.entry,
+    required this.rootDirectoryPath,
+    required this.isFirst,
+    required this.isLast,
+    required this.onTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final DiaryEntry entry;
+  final String? rootDirectoryPath;
+  final bool isFirst;
+  final bool isLast;
+  final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 64,
+            child: _TimelineRail(
+              date: entry.createdAt,
+              isFirst: isFirst,
+              isLast: isLast,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+              child: _TimelineEntryCard(
+                entry: entry,
+                rootDirectoryPath: rootDirectoryPath,
+                onTap: onTap,
+                onEdit: onEdit,
+                onDelete: onDelete,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineRail extends StatelessWidget {
+  const _TimelineRail({
+    required this.date,
+    required this.isFirst,
+    required this.isLast,
+  });
+
+  final DateTime date;
+  final bool isFirst;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        Positioned(
+          top: isFirst ? 30 : 0,
+          bottom: isLast ? 30 : 0,
+          child: Container(
+            width: 2,
+            decoration: BoxDecoration(
+              color: DiaryPalette.rose.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            children: [
+              Container(
+                width: 48,
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: BoxDecoration(
+                  color: DiaryPalette.mist.withValues(alpha: 0.96),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: DiaryPalette.white, width: 2),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      '${date.day}',
+                      style:
+                          Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: DiaryPalette.rose,
+                                fontWeight: FontWeight.w900,
+                                height: 0.95,
+                              ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${date.month}月',
+                      style:
+                          Theme.of(context).textTheme.labelMedium?.copyWith(
+                                color: DiaryPalette.wine,
+                                fontWeight: FontWeight.w800,
+                              ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${date.year}',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: DiaryPalette.wine,
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -281,53 +480,27 @@ class _TimelineEntryCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 62,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: DiaryPalette.mist,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        '${entry.createdAt.day}',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                              color: DiaryPalette.rose,
-                              fontWeight: FontWeight.w900,
-                            ),
-                      ),
-                      Text(
-                        '${entry.createdAt.month}月',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              color: DiaryPalette.wine,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         entry.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: DiaryPalette.ink,
-                              fontWeight: FontWeight.w900,
-                            ),
+                          color: DiaryPalette.ink,
+                          fontWeight: FontWeight.w900,
+                          height: 1.12,
+                        ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 7),
                       Text(
                         '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: DiaryPalette.wine,
-                            ),
+                          color: DiaryPalette.wine,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -363,9 +536,9 @@ class _TimelineEntryCard extends StatelessWidget {
                     maxLines: 5,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: DiaryPalette.wine,
-                          height: 1.55,
-                        ),
+                      color: DiaryPalette.wine,
+                      height: 1.58,
+                    ),
                   ),
                 ),
                 if (entry.attachments.isNotEmpty) ...[
@@ -373,9 +546,9 @@ class _TimelineEntryCard extends StatelessWidget {
                   DiaryCover(
                     rootDirectoryPath: rootDirectoryPath,
                     attachments: entry.attachments,
-                    width: 96,
-                    height: 118,
-                    radius: 20,
+                    width: 92,
+                    height: 112,
+                    radius: 22,
                   ),
                 ],
               ],
@@ -385,15 +558,18 @@ class _TimelineEntryCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
+                DiaryBadge(label: entry.author, tone: DiaryBadgeTone.sand),
                 DiaryBadge(label: entry.mood),
-                DiaryBadge(
-                  label: '${entry.attachments.length} 张图',
-                  tone: DiaryBadgeTone.sand,
-                ),
-                DiaryBadge(
-                  label: '${entry.commentCount} 条评论',
-                  tone: DiaryBadgeTone.ink,
-                ),
+                if (entry.attachments.isNotEmpty)
+                  DiaryBadge(
+                    label: '${entry.attachments.length} 张图',
+                    tone: DiaryBadgeTone.sand,
+                  ),
+                if (entry.commentCount > 0)
+                  DiaryBadge(
+                    label: '${entry.commentCount} 条评论',
+                    tone: DiaryBadgeTone.ink,
+                  ),
                 if (entry.updatedAt != null)
                   DiaryBadge(
                     label:

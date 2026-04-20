@@ -9,17 +9,19 @@ class RealTodayTab extends StatelessWidget {
     required this.profile,
     required this.entries,
     required this.rootDirectoryPath,
+    required this.startupQuote,
     required this.onOpenEntry,
   });
 
   final CoupleProfile profile;
   final List<DiaryEntry> entries;
   final String? rootDirectoryPath;
+  final String startupQuote;
   final ValueChanged<DiaryEntry> onOpenEntry;
 
   @override
   Widget build(BuildContext context) {
-    final latestEntries = entries.take(3).toList();
+    final recentEntries = entries.take(8).toList();
     final togetherDays =
         DateTime.now().difference(profile.togetherSince).inDays + 1;
 
@@ -29,24 +31,10 @@ class RealTodayTab extends StatelessWidget {
         children: [
           DiaryHero(
             eyebrow: '首页',
-            title: '${profile.currentUserName}和${profile.partnerName}',
-            subtitle: '把今天值得记住的小事留在这里。日子不一定轰轰烈烈，但回头看时，会发现每一篇都很重要。',
-            trailing: Container(
-              width: 78,
-              height: 78,
-              decoration: const BoxDecoration(
-                color: DiaryPalette.mist,
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '$togetherDays',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: DiaryPalette.rose,
-                      fontWeight: FontWeight.w900,
-                    ),
-              ),
-            ),
+            title: '${profile.currentUserName} 和 ${profile.partnerName}',
+            subtitle: '恋爱空间',
+            trailing: _DaysSeal(days: togetherDays),
+            quote: startupQuote,
             footer: Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -63,36 +51,84 @@ class RealTodayTab extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 26),
           const DiarySectionHeader(
             title: '最近日记',
-            subtitle: '按创建时间倒序显示。',
+            subtitle: '横向浏览最近写下的日记，带图的像相册，无图的就专心读文字。',
           ),
           const SizedBox(height: 14),
-          if (latestEntries.isEmpty)
+          if (recentEntries.isEmpty)
             const DiaryEmptyState(
-              title: '还没有日记',
-              subtitle: '先写第一篇，再回来这里看最近记录。',
+              title: '还没有最近记录',
+              subtitle: '写下第一篇后，这里会变成你们的近期小相册。',
             )
           else
-            ...latestEntries.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: _TodayEntryCard(
-                  entry: entry,
-                  rootDirectoryPath: rootDirectoryPath,
-                  onTap: () => onOpenEntry(entry),
-                ),
+            SizedBox(
+              height: 260,
+              child: ListView.separated(
+                clipBehavior: Clip.none,
+                scrollDirection: Axis.horizontal,
+                itemCount: recentEntries.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final entry = recentEntries[index];
+                  return _RecentMemoryCard(
+                    entry: entry,
+                    rootDirectoryPath: rootDirectoryPath,
+                    onTap: () => onOpenEntry(entry),
+                  );
+                },
               ),
             ),
         ],
       ),
     );
   }
+
 }
 
-class _TodayEntryCard extends StatelessWidget {
-  const _TodayEntryCard({
+class _DaysSeal extends StatelessWidget {
+  const _DaysSeal({required this.days});
+
+  final int days;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 78,
+      height: 78,
+      decoration: BoxDecoration(
+        color: DiaryPalette.mist.withValues(alpha: 0.92),
+        shape: BoxShape.circle,
+        border: Border.all(color: DiaryPalette.white, width: 2),
+      ),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$days',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: DiaryPalette.rose,
+                  fontWeight: FontWeight.w900,
+                  height: 0.95,
+                ),
+          ),
+          Text(
+            '天',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: DiaryPalette.wine,
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecentMemoryCard extends StatelessWidget {
+  const _RecentMemoryCard({
     required this.entry,
     required this.rootDirectoryPath,
     required this.onTap,
@@ -104,79 +140,81 @@ class _TodayEntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(28),
-      onTap: onTap,
-      child: DiaryPanel(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DiaryCover(
-              rootDirectoryPath: rootDirectoryPath,
-              attachments: entry.attachments,
-              width: 104,
-              height: 132,
-              radius: 24,
-              iconSize: 30,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
-                          height: 1.15,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    entry.summary,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: DiaryPalette.wine,
-                          height: 1.5,
-                        ),
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      DiaryBadge(label: entry.mood),
-                      DiaryBadge(
-                        label:
-                            '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
-                        tone: DiaryBadgeTone.ink,
+    final hasImage = entry.attachments.isNotEmpty;
+
+    return SizedBox(
+      width: 190,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: onTap,
+        child: DiaryPanel(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (hasImage) ...[
+                DiaryCover(
+                  rootDirectoryPath: rootDirectoryPath,
+                  attachments: entry.attachments,
+                  width: double.infinity,
+                  height: 112,
+                  radius: 22,
+                ),
+                const SizedBox(height: 12),
+              ],
+              Text(
+                entry.title,
+                maxLines: hasImage ? 2 : 3,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: DiaryPalette.ink,
+                      fontWeight: FontWeight.w900,
+                      height: 1.14,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${formatDiaryShortDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)} · ${entry.mood}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: DiaryPalette.wine,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Text(
+                  entry.summary,
+                  maxLines: hasImage ? 3 : 7,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DiaryPalette.wine,
+                        height: 1.45,
                       ),
-                      if (entry.updatedAt != null)
-                        DiaryBadge(
-                          label:
-                              '更新 ${formatDiaryShortDate(entry.updatedAt!)} ${formatDiaryTime(entry.updatedAt!)}',
-                          tone: DiaryBadgeTone.sand,
-                        ),
-                      if (entry.attachments.isNotEmpty)
-                        DiaryBadge(
-                          label: '${entry.attachments.length} 张图',
-                          tone: DiaryBadgeTone.sand,
-                        ),
-                      if (entry.commentCount > 0)
-                        DiaryBadge(
-                          label: '${entry.commentCount} 条评论',
-                          tone: DiaryBadgeTone.ink,
-                        ),
-                    ],
-                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  if (entry.attachments.isNotEmpty)
+                    DiaryBadge(
+                      label: '${entry.attachments.length} 图',
+                      tone: DiaryBadgeTone.sand,
+                    ),
+                  if (entry.commentCount > 0)
+                    DiaryBadge(
+                      label: '${entry.commentCount} 评论',
+                      tone: DiaryBadgeTone.ink,
+                    ),
+                  if (entry.attachments.isEmpty && entry.commentCount == 0)
+                    DiaryBadge(label: entry.author, tone: DiaryBadgeTone.sand),
                 ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

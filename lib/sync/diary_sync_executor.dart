@@ -21,6 +21,29 @@ class SyncExecutionResult {
   final List<String> conflictPaths;
 
   bool get hasConflicts => conflictPaths.isNotEmpty;
+
+  int get changedCount =>
+      uploadedPaths.length +
+      downloadedPaths.length +
+      deletedRemotePaths.length +
+      deletedLocalPaths.length;
+}
+
+class SyncSafetyPolicy {
+  const SyncSafetyPolicy({
+    this.maxDestructiveActions = 3,
+  });
+
+  final int maxDestructiveActions;
+}
+
+class SyncSafetyException implements Exception {
+  const SyncSafetyException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class DiarySyncExecutor {
@@ -28,67 +51,54 @@ class DiarySyncExecutor {
     required this.storage,
     required this.remoteSource,
     this.onProgress,
+    this.safetyPolicy = const SyncSafetyPolicy(),
   });
 
   final DiaryStorage storage;
   final DiarySyncRemoteSource remoteSource;
   final void Function(double progress, String label)? onProgress;
+  final SyncSafetyPolicy safetyPolicy;
 
   Future<SyncExecutionResult> sync() async {
-    onProgress?.call(0.1, '正在检查本地和云端差异');
+    onProgress?.call(0.08, '读取本地和云端状态');
     final planner = DiarySyncService(storage: storage, remoteSource: remoteSource);
     final plan = await planner.buildPlan();
-    onProgress?.call(0.3, '同步计划已生成');
+    onProgress?.call(0.22, '生成同步计划');
 
-    final uploadedPaths = <String>[];
-    final downloadedPaths = <String>[];
-    final deletedRemotePaths = <String>[];
-    final deletedLocalPaths = <String>[];
     final conflictPaths = plan.actions
         .where((action) => action.type == SyncActionType.conflict)
         .map((action) => action.relativePath)
         .toList();
 
     if (conflictPaths.isNotEmpty) {
-      onProgress?.call(1, '发现同步冲突');
+      onProgress?.call(1, '发现冲突，等待处理');
       return SyncExecutionResult(
-        uploadedPaths: uploadedPaths,
-        downloadedPaths: downloadedPaths,
-        deletedRemotePaths: deletedRemotePaths,
-        deletedLocalPaths: deletedLocalPaths,
+        uploadedPaths: const [],
+        downloadedPaths: const [],
+        deletedRemotePaths: const [],
+        deletedLocalPaths: const [],
         conflictPaths: conflictPaths,
       );
     }
 
+    _enforceSafety(plan.actions);
+
+    final uploadedPaths = <String>[];
+    final downloadedPaths = <String>[];
+    final deletedRemotePaths = <String>[];
+    final deletedLocalPaths = <String>[];
     final localByPath = {
       for (final file in plan.localFiles) file.relativePath: file,
     };
-    final sortedActions = [...plan.actions]..sort((a, b) {
-      final typeOrder = _actionOrder(a.type).compareTo(_actionOrder(b.type));
-      if (typeOrder != 0) {
-        return typeOrder;
-      }
-      return a.relativePath.compareTo(b.relativePath);
-    });
+    final sortedActions = [...plan.actions]..sort(_compareActions);
 
     final totalActionCount = sortedActions.isEmpty ? 1 : sortedActions.length;
     for (var index = 0; index < sortedActions.length; index++) {
       final action = sortedActions[index];
-      final progress = 0.35 + ((index + 1) / totalActionCount) * 0.45;
+      final progress = 0.28 + ((index + 1) / totalActionCount) * 0.54;
       onProgress?.call(progress, _labelForAction(action));
+
       switch (action.type) {
-        case SyncActionType.upload:
-          final localFile = localByPath[action.relativePath];
-          if (localFile == null) {
-            continue;
-          }
-          await remoteSource.uploadFile(
-            relativePath: localFile.relativePath,
-            absolutePath: localFile.absolutePath,
-            isBinary: localFile.isBinary,
-          );
-          uploadedPaths.add(action.relativePath);
-          break;
         case SyncActionType.download:
           final targetAbsolutePath = await storage.resolveSyncFileAbsolutePath(
             action.relativePath,
@@ -101,20 +111,32 @@ class DiarySyncExecutor {
           );
           downloadedPaths.add(action.relativePath);
           break;
-        case SyncActionType.deleteRemote:
-          await remoteSource.deleteFile(action.relativePath);
-          deletedRemotePaths.add(action.relativePath);
+        case SyncActionType.upload:
+          final localFile = localByPath[action.relativePath];
+          if (localFile == null) {
+            continue;
+          }
+          await remoteSource.uploadFile(
+            relativePath: localFile.relativePath,
+            absolutePath: localFile.absolutePath,
+            isBinary: localFile.isBinary,
+          );
+          uploadedPaths.add(action.relativePath);
           break;
         case SyncActionType.deleteLocal:
           await storage.deleteSyncFile(action.relativePath);
           deletedLocalPaths.add(action.relativePath);
+          break;
+        case SyncActionType.deleteRemote:
+          await remoteSource.deleteFile(action.relativePath);
+          deletedRemotePaths.add(action.relativePath);
           break;
         case SyncActionType.conflict:
           break;
       }
     }
 
-    onProgress?.call(0.9, '正在刷新同步状态');
+    onProgress?.call(0.9, '更新同步记录');
     await _refreshSyncState(deletedRemotePaths: deletedRemotePaths);
     onProgress?.call(1, '同步完成');
 
@@ -166,33 +188,108 @@ class DiarySyncExecutor {
     await _refreshSyncState();
   }
 
+  void _enforceSafety(List<SyncAction> actions) {
+    final destructiveActions = actions
+        .where(
+          (action) =>
+              action.type == SyncActionType.deleteRemote ||
+              action.type == SyncActionType.deleteLocal,
+        )
+        .toList();
+    if (destructiveActions.length <= safetyPolicy.maxDestructiveActions) {
+      return;
+    }
+
+    throw SyncSafetyException(
+      '同步计划包含 ${destructiveActions.length} 个删除动作，超过当前保护阈值 '
+      '${safetyPolicy.maxDestructiveActions}。请先检查本地和云端数据，再手动放宽限制。',
+    );
+  }
+
+  int _compareActions(SyncAction a, SyncAction b) {
+    final typeOrder = _actionOrder(a.type).compareTo(_actionOrder(b.type));
+    if (typeOrder != 0) {
+      return typeOrder;
+    }
+
+    final pathOrder = _pathOrder(a).compareTo(_pathOrder(b));
+    if (pathOrder != 0) {
+      return pathOrder;
+    }
+
+    return a.relativePath.compareTo(b.relativePath);
+  }
+
   int _actionOrder(SyncActionType type) {
     switch (type) {
-      case SyncActionType.deleteRemote:
-        return 0;
-      case SyncActionType.deleteLocal:
-        return 1;
       case SyncActionType.download:
-        return 2;
+        return 0;
       case SyncActionType.upload:
+        return 1;
+      case SyncActionType.deleteLocal:
+        return 2;
+      case SyncActionType.deleteRemote:
         return 3;
       case SyncActionType.conflict:
         return 4;
     }
   }
 
+  int _pathOrder(SyncAction action) {
+    final path = action.relativePath;
+
+    if (action.type == SyncActionType.upload) {
+      if (path.startsWith('attachments/')) {
+        return 0;
+      }
+      if (path.startsWith('entries/')) {
+        return 1;
+      }
+      if (path == 'profile.json') {
+        return 2;
+      }
+      return 3;
+    }
+
+    if (action.type == SyncActionType.download) {
+      if (path == 'profile.json') {
+        return 0;
+      }
+      if (path.startsWith('entries/')) {
+        return 1;
+      }
+      if (path.startsWith('attachments/')) {
+        return 2;
+      }
+      return 3;
+    }
+
+    if (action.type == SyncActionType.deleteRemote ||
+        action.type == SyncActionType.deleteLocal) {
+      if (path.startsWith('attachments/')) {
+        return 0;
+      }
+      if (path.startsWith('entries/')) {
+        return 1;
+      }
+      return 2;
+    }
+
+    return 0;
+  }
+
   String _labelForAction(SyncAction action) {
     switch (action.type) {
-      case SyncActionType.upload:
-        return '正在上传 ${action.relativePath}';
       case SyncActionType.download:
-        return '正在下载 ${action.relativePath}';
-      case SyncActionType.deleteRemote:
-        return '正在删除云端文件 ${action.relativePath}';
+        return '下载 ${action.relativePath}';
+      case SyncActionType.upload:
+        return '上传 ${action.relativePath}';
       case SyncActionType.deleteLocal:
-        return '正在清理本地文件 ${action.relativePath}';
+        return '删除本地 ${action.relativePath}';
+      case SyncActionType.deleteRemote:
+        return '删除云端 ${action.relativePath}';
       case SyncActionType.conflict:
-        return '正在处理冲突 ${action.relativePath}';
+        return '冲突 ${action.relativePath}';
     }
   }
 

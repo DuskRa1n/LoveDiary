@@ -145,6 +145,7 @@ class CoupleProfile {
 class DiaryEntry {
   const DiaryEntry({
     required this.id,
+    required this.author,
     required this.title,
     required this.content,
     required this.mood,
@@ -155,6 +156,7 @@ class DiaryEntry {
   });
 
   final String id;
+  final String author;
   final String title;
   final String content;
   final String mood;
@@ -175,6 +177,7 @@ class DiaryEntry {
 
   DiaryEntry copyWith({
     String? id,
+    String? author,
     String? title,
     String? content,
     String? mood,
@@ -186,6 +189,7 @@ class DiaryEntry {
   }) {
     return DiaryEntry(
       id: id ?? this.id,
+      author: author ?? this.author,
       title: title ?? this.title,
       content: content ?? this.content,
       mood: mood ?? this.mood,
@@ -200,6 +204,7 @@ class DiaryEntry {
     return {
       'id': id,
       'schema_version': 2,
+      'author': author,
       'title': title,
       'content': content,
       'mood': mood,
@@ -216,6 +221,7 @@ class DiaryEntry {
 
     return DiaryEntry(
       id: json['id'] as String,
+      author: json['author'] as String? ?? '他',
       title: json['title'] as String? ?? '',
       content: json['content'] as String? ?? '',
       mood: json['mood'] as String? ?? '开心',

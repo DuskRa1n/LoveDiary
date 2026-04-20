@@ -1,5 +1,8 @@
 package com.example.love_diary
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Surface
@@ -14,6 +17,7 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestHighestRefreshRate()
+        requestNotificationPermissionIfNeeded()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -26,6 +30,29 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "getAppDocumentsDir" -> {
                     result.success(applicationContext.filesDir.absolutePath)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "love_diary/sync_foreground",
+        ).setMethodCallHandler { call, result ->
+            val label = call.argument<String>("label") ?: "正在同步 OneDrive"
+            val progress = call.argument<Double>("progress") ?: -1.0
+            when (call.method) {
+                "start" -> {
+                    startSyncForegroundService(SyncForegroundService.ACTION_START, label, progress)
+                    result.success(null)
+                }
+                "update" -> {
+                    startSyncForegroundService(SyncForegroundService.ACTION_UPDATE, label, progress)
+                    result.success(null)
+                }
+                "stop" -> {
+                    stopSyncForegroundService()
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
@@ -67,6 +94,39 @@ class MainActivity : FlutterActivity() {
         }
 
         window.attributes = attributes
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            NOTIFICATION_PERMISSION_REQUEST_CODE,
+        )
+    }
+
+    private fun startSyncForegroundService(action: String, label: String, progress: Double) {
+        val intent = Intent(this, SyncForegroundService::class.java).apply {
+            this.action = action
+            putExtra(SyncForegroundService.EXTRA_LABEL, label)
+            putExtra(SyncForegroundService.EXTRA_PROGRESS, progress)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopSyncForegroundService() {
+        val intent = Intent(this, SyncForegroundService::class.java).apply {
+            action = SyncForegroundService.ACTION_STOP
+        }
+        stopService(intent)
     }
 
     private fun requestFlutterSurfaceFrameRate() {
@@ -120,5 +180,9 @@ class MainActivity : FlutterActivity() {
             }
         }
         return null
+    }
+
+    companion object {
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 2308
     }
 }

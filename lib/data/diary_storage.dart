@@ -1051,6 +1051,7 @@ class DiaryStorage {
     return [
       DiaryEntry(
         id: 'entry_noodle_night',
+        author: '她',
         title: '深夜面馆',
         content: '晚上一起去吃了面，风有点凉，但你把围巾分给了我一半。回家路上还约好周末去看海。',
         mood: '开心',
@@ -1066,6 +1067,7 @@ class DiaryStorage {
       ),
       DiaryEntry(
         id: 'entry_rain_walk',
+        author: '他',
         title: '下雨天一起散步',
         content: '原本只是想去便利店，结果下起小雨，我们干脆绕着小区走了一圈。你说这样的夜晚很安静。',
         mood: '治愈',
@@ -1081,6 +1083,7 @@ class DiaryStorage {
       ),
       DiaryEntry(
         id: 'entry_pancake_morning',
+        author: '她',
         title: '周末煎饼计划',
         content: '早上一起做了煎饼，第一张糊掉了，第二张终于成功。你还认真摆盘，说要纪念第一次合作早餐。',
         mood: '甜',

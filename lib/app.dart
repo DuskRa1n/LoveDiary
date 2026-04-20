@@ -15,14 +15,17 @@ import 'sync/onedrive/onedrive_models.dart';
 import 'sync/onedrive/onedrive_remote_source.dart';
 import 'sync/sync_models.dart';
 import 'sync/sync_remote_source.dart';
+import 'sync/sync_foreground_guard.dart';
 import 'sync/webdav/jianguoyun_debug_bootstrap.dart';
 import 'sync/webdav/webdav_models.dart';
 import 'sync/webdav/webdav_remote_source.dart';
 import 'ui/diary_design.dart';
+import 'ui/daily_quotes.dart';
 import 'ui/onedrive_connect_page.dart';
 import 'ui/real_today_tab.dart';
 import 'ui/real_timeline_tab.dart';
 import 'ui/real_us_tab.dart';
+import 'ui/sync_messages.dart';
 import 'ui/sync_conflict_page.dart';
 
 const List<String> kDiaryMoods = ['开心', '安心', '温柔', '想念', '真诚', '治愈', '甜'];
@@ -37,6 +40,16 @@ class LoveDailyApp extends StatelessWidget {
     return MaterialApp(
       title: '恋爱日记',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle.dark.copyWith(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: DiaryPalette.paper,
@@ -66,9 +79,10 @@ class LoveDailyApp extends StatelessWidget {
           foregroundColor: DiaryPalette.ink,
           elevation: 0,
           scrolledUnderElevation: 0,
+          systemOverlayStyle: SystemUiOverlayStyle.dark,
         ),
         navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: DiaryPalette.white.withValues(alpha: 0.92),
+          backgroundColor: DiaryPalette.white.withValues(alpha: 0.82),
           indicatorColor: DiaryPalette.mist,
           surfaceTintColor: Colors.transparent,
           labelTextStyle: WidgetStateProperty.resolveWith((states) {
@@ -86,8 +100,8 @@ class LoveDailyApp extends StatelessWidget {
           }),
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: DiaryPalette.blush,
-          foregroundColor: DiaryPalette.ink,
+          backgroundColor: DiaryPalette.rose,
+          foregroundColor: Colors.white,
           extendedTextStyle: TextStyle(fontWeight: FontWeight.w800),
         ),
         filledButtonTheme: FilledButtonThemeData(
@@ -104,6 +118,7 @@ class LoveDailyApp extends StatelessWidget {
           style: OutlinedButton.styleFrom(
             foregroundColor: DiaryPalette.wine,
             side: const BorderSide(color: DiaryPalette.line),
+            backgroundColor: DiaryPalette.white,
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
@@ -112,7 +127,7 @@ class LoveDailyApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: DiaryPalette.white.withValues(alpha: 0.9),
+          fillColor: DiaryPalette.white.withValues(alpha: 0.86),
           hintStyle: const TextStyle(color: DiaryPalette.wine),
           prefixIconColor: DiaryPalette.wine,
           suffixIconColor: DiaryPalette.wine,
@@ -145,6 +160,7 @@ class LoveDailyShell extends StatefulWidget {
 }
 
 class _LoveDailyShellState extends State<LoveDailyShell> {
+  late final String _startupQuote = randomDailyQuote();
   List<DiaryEntry> _entries = const [];
   CoupleProfile _profile = DiaryStorage.seedProfile();
   bool _isLoaded = false;
@@ -152,13 +168,16 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   bool _isSyncingOneDrive = false;
   bool _isEditingJianguoyun = false;
   bool _isSyncingJianguoyun = false;
+  bool _isForcedSyncBlocking = false;
   bool _hasHandledStartupRecovery = false;
+  bool _hasCheckedStartupOneDriveSync = false;
   int _currentIndex = 0;
   DateTime? _lastSyncedAt;
   double? _oneDriveSyncProgress;
   String? _oneDriveSyncLabel;
   double? _jianguoyunSyncProgress;
   String? _jianguoyunSyncLabel;
+  String _syncWaitingMessage = randomSyncWaitingMessage();
   OneDriveSyncConfig? _oneDriveConfig;
   WebDavSyncConfig? _jianguoyunConfig;
   String? _storageRootPath;
@@ -208,12 +227,24 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           _shouldOfferStartupRecovery(
             entries: entries,
             profile: profile,
+            oneDriveConfig: oneDriveConfig,
             jianguoyunConfig: jianguoyunConfig,
           )) {
         _hasHandledStartupRecovery = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _offerStartupRecovery();
+          }
+        });
+      }
+
+      if (!_hasCheckedStartupOneDriveSync &&
+          oneDriveConfig != null &&
+          _shouldRunStartupOneDriveSync(syncState.lastSyncedAt)) {
+        _hasCheckedStartupOneDriveSync = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            unawaited(_syncWithOneDrive(interactive: false));
           }
         });
       }
@@ -395,10 +426,36 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   bool _shouldOfferStartupRecovery({
     required List<DiaryEntry> entries,
     required CoupleProfile profile,
+    required OneDriveSyncConfig? oneDriveConfig,
     required WebDavSyncConfig? jianguoyunConfig,
   }) {
     final hasLocalData = entries.isNotEmpty || profile.isOnboarded;
-    return !hasLocalData;
+    return !hasLocalData && oneDriveConfig == null;
+  }
+
+  bool _shouldRunStartupOneDriveSync(DateTime? lastSyncedAt) {
+    if (lastSyncedAt == null) {
+      return true;
+    }
+
+    final syncPoint = _latestReachedStartupSyncPoint(DateTime.now());
+    return lastSyncedAt.isBefore(syncPoint);
+  }
+
+  DateTime _latestReachedStartupSyncPoint(DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    const checkpointHours = [6, 12, 18];
+
+    for (final hour in checkpointHours.reversed) {
+      final checkpoint = today.add(Duration(hours: hour));
+      if (!now.isBefore(checkpoint)) {
+        return checkpoint;
+      }
+    }
+
+    return today.subtract(const Duration(days: 1)).add(
+          const Duration(hours: 18),
+        );
   }
 
   Future<void> _persistProfile() => widget.storage.saveProfile(_profile);
@@ -418,6 +475,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       MaterialPageRoute(
         builder: (_) => CreateEntryPage(
           storage: widget.storage,
+          profile: _profile,
           initialEntry: initialEntry,
           rootDirectoryPath: _storageRootPath,
         ),
@@ -599,6 +657,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
     final defaults = _OneDriveConfigFormData(
       remoteFolder: _oneDriveConfig?.remoteFolder ?? kOneDriveRemoteFolder,
+      syncOnWrite: _oneDriveConfig?.syncOnWrite ?? false,
+      minimumSyncIntervalMinutes:
+          _oneDriveConfig?.minimumSyncIntervalMinutes ?? 0,
+      maxDestructiveActions: _oneDriveConfig?.maxDestructiveActions ?? 3,
     );
     final formData = await _showOneDriveConfigPage(defaults);
     if (formData == null) {
@@ -612,6 +674,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
     final updated = _oneDriveConfig!.copyWith(
       remoteFolder: formData.remoteFolder,
+      syncOnWrite: formData.syncOnWrite,
+      minimumSyncIntervalMinutes: formData.minimumSyncIntervalMinutes,
+      maxDestructiveActions: formData.maxDestructiveActions,
     );
     await widget.storage.saveOneDriveSyncConfig(updated);
     if (!mounted) {
@@ -624,20 +689,62 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     _showMessage('OneDrive 远端目录已更新');
   }
 
-  Future<void> _syncWithOneDrive() async {
+  Future<void> _syncWithOneDrive({bool interactive = true}) async {
     if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
       return;
     }
 
+    final ownsBlockingGate = !_isForcedSyncBlocking;
+    var releasedBlockingGate = false;
+
+    void releaseBlockingGate() {
+      if (!ownsBlockingGate || releasedBlockingGate) {
+        return;
+      }
+      releasedBlockingGate = true;
+      if (mounted) {
+        setState(() {
+          _isForcedSyncBlocking = false;
+        });
+      }
+    }
+
     setState(() {
       _isSyncingOneDrive = true;
+      _oneDriveSyncProgress = 0;
+      _oneDriveSyncLabel = _friendlySyncMessage(0);
+      if (ownsBlockingGate) {
+        _isForcedSyncBlocking = true;
+        _syncWaitingMessage = randomSyncWaitingMessage();
+      }
     });
+
+    await SyncForegroundGuard.start(
+      label: _friendlySyncMessage(0),
+      progress: 0,
+    );
 
     try {
       final remoteSource = _oneDriveRemoteSource();
       final executor = DiarySyncExecutor(
         storage: widget.storage,
         remoteSource: remoteSource,
+        safetyPolicy: SyncSafetyPolicy(
+          maxDestructiveActions: _oneDriveConfig!.maxDestructiveActions,
+        ),
+        onProgress: (progress, label) {
+          final friendlyLabel = _friendlySyncMessage(progress);
+          unawaited(
+            SyncForegroundGuard.update(label: friendlyLabel, progress: progress),
+          );
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _oneDriveSyncProgress = progress;
+            _oneDriveSyncLabel = friendlyLabel;
+          });
+        },
       );
       final result = await executor.sync();
       await _loadAppData();
@@ -647,6 +754,11 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
 
       if (result.hasConflicts) {
+        if (!interactive) {
+          _showMessage('自动同步发现冲突，请手动同步后处理。');
+          return;
+        }
+        releaseBlockingGate();
         await _handleSyncConflicts(
           conflictPaths: result.conflictPaths,
           remoteSource: remoteSource,
@@ -662,7 +774,14 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         return;
       }
 
-      await _showSyncResultDialog(sourceLabel: 'OneDrive', result: result);
+      if (interactive) {
+        releaseBlockingGate();
+        await _showSyncResultDialog(sourceLabel: 'OneDrive', result: result);
+      }
+    } on SyncSafetyException catch (error) {
+      if (mounted) {
+        _showMessage(error.message);
+      }
     } on OneDriveAuthException catch (error) {
       if (mounted) {
         _showMessage(error.message);
@@ -672,17 +791,21 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         _showMessage('OneDrive 同步失败：$error');
       }
     } finally {
+      await SyncForegroundGuard.stop();
+      releaseBlockingGate();
       if (mounted) {
         setState(() {
           _isSyncingOneDrive = false;
+          _oneDriveSyncProgress = null;
+          _oneDriveSyncLabel = null;
         });
       }
     }
   }
 
-  Future<void> _disconnectOneDrive() async {
+  Future<bool> _disconnectOneDrive() async {
     if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
-      return;
+      return false;
     }
 
     final confirmed = await showDialog<bool>(
@@ -706,18 +829,19 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     );
 
     if (confirmed != true) {
-      return;
+      return false;
     }
 
     await _oneDriveAuthService().disconnect();
     if (!mounted) {
-      return;
+      return false;
     }
 
     setState(() {
       _oneDriveConfig = null;
     });
     _showMessage('已断开 OneDrive');
+    return true;
   }
 
   Future<void> _openJianguoyunSettings() async {
@@ -836,13 +960,40 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return;
     }
 
-    if (_oneDriveConfig != null) {
-      await _syncWithOneDrive();
+    final config = _oneDriveConfig;
+    if (config == null || !config.syncOnWrite) {
       return;
     }
 
-    if (_jianguoyunConfig != null) {
-      await _syncWithJianguoyun();
+    if (config.minimumSyncIntervalMinutes > 0 && _lastSyncedAt != null) {
+      final minimumInterval = Duration(
+        minutes: config.minimumSyncIntervalMinutes,
+      );
+      if (DateTime.now().difference(_lastSyncedAt!) < minimumInterval) {
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _isForcedSyncBlocking = true;
+        _oneDriveSyncProgress = 0;
+        _oneDriveSyncLabel = _friendlySyncMessage(0);
+        _syncWaitingMessage = randomSyncWaitingMessage();
+      });
+    }
+
+    try {
+      await _syncWithOneDrive(interactive: false);
+      if (mounted) {
+        _showMessage('已经把小日子放到云端了');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isForcedSyncBlocking = false;
+        });
+      }
     }
   }
 
@@ -1063,7 +1214,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     return Navigator.of(context).push<_OneDriveConfigFormData>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _OneDriveConfigPage(defaults: defaults),
+        builder: (_) => _OneDriveSyncSettingsPage(
+          defaults: defaults,
+          onDisconnect: _disconnectOneDrive,
+        ),
       ),
     );
   }
@@ -1128,6 +1282,96 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     );
   }
 
+  Widget _buildForcedSyncOverlay() {
+    if (!_isForcedSyncBlocking) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned.fill(
+      child: ColoredBox(
+        color: DiaryPalette.paper.withValues(alpha: 0.88),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: DiaryPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '正在同步',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: DiaryPalette.ink,
+                          fontWeight: FontWeight.w900,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _syncWaitingMessage,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                          height: 1.5,
+                        ),
+                  ),
+                  const SizedBox(height: 18),
+                  LinearProgressIndicator(value: _oneDriveSyncProgress),
+                  const SizedBox(height: 10),
+                  Text(
+                    _oneDriveSyncLabel ?? '正在轻轻整理云端记忆...',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _friendlySyncMessage(double progress) {
+    if (progress < 0.18) {
+      return '正在叫醒云端的小信箱...';
+    }
+    if (progress < 0.45) {
+      return '正在把新鲜的小日子装进行李箱...';
+    }
+    if (progress < 0.82) {
+      return '正在和 OneDrive 对齐记忆...';
+    }
+    if (progress < 1) {
+      return '快好了，正在收尾整理...';
+    }
+    return '同步完成，记忆已安放好';
+  }
+
+  Widget _buildFloatingActionButton() {
+    if (_currentIndex == 2) {
+      final isBusy =
+          _isForcedSyncBlocking || _isConnectingOneDrive || _isSyncingOneDrive;
+      if (_oneDriveConfig == null) {
+        return FloatingActionButton.extended(
+          onPressed: isBusy ? null : () => _connectOneDrive(),
+          icon: const Icon(Icons.cloud_sync_rounded),
+          label: const Text('连接 OneDrive'),
+        );
+      }
+      return FloatingActionButton.extended(
+        onPressed: isBusy ? null : () => _syncWithOneDrive(),
+        icon: const Icon(Icons.sync_rounded),
+        label: Text(_isSyncingOneDrive ? '同步中...' : '立即同步'),
+      );
+    }
+
+    return FloatingActionButton.extended(
+      onPressed: _isForcedSyncBlocking ? null : () => _openEditor(),
+      icon: const Icon(Icons.edit_note_rounded),
+      label: const Text('写日记'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_isLoaded) {
@@ -1152,6 +1396,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         profile: _profile,
         entries: _entries,
         rootDirectoryPath: _storageRootPath,
+        startupQuote: _startupQuote,
         onOpenEntry: _openEntryDetail,
       ),
       RealTimelineTab(
@@ -1167,16 +1412,15 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         oneDriveConfig: _oneDriveConfig,
         jianguoyunConfig: _jianguoyunConfig,
         lastSyncedAt: _lastSyncedAt,
-        isConnectingOneDrive: _isConnectingOneDrive,
         isSyncingOneDrive: _isSyncingOneDrive,
+        oneDriveSyncProgress: _oneDriveSyncProgress,
+        oneDriveSyncLabel: _oneDriveSyncLabel,
         isEditingJianguoyun: _isEditingJianguoyun,
         isSyncingJianguoyun: _isSyncingJianguoyun,
         onEditProfile: () => _openProfileEditor(firstSetup: false),
         onOpenDustbin: _openDustbin,
         onConnectOneDrive: _connectOneDrive,
         onOpenOneDriveSettings: _openOneDriveSettings,
-        onSyncOneDrive: _syncWithOneDrive,
-        onDisconnectOneDrive: _disconnectOneDrive,
         onOpenJianguoyunSettings: _openJianguoyunSettings,
         onSyncJianguoyun: _syncWithJianguoyun,
         onDisconnectJianguoyun: _disconnectJianguoyun,
@@ -1185,27 +1429,30 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildStartupErrorBanner(),
-            Expanded(
-              child: IndexedStack(index: _currentIndex, children: pages),
+            Column(
+              children: [
+                _buildStartupErrorBanner(),
+                Expanded(
+                  child: IndexedStack(index: _currentIndex, children: pages),
+                ),
+              ],
             ),
+            _buildForcedSyncOverlay(),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
-        icon: const Icon(Icons.edit_note_rounded),
-        label: const Text('写日记'),
-      ),
+      floatingActionButton: _buildFloatingActionButton(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
+        onDestinationSelected: _isForcedSyncBlocking
+            ? null
+            : (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.favorite_border_rounded),
@@ -1663,13 +1910,11 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
 
   late DiaryEntry _entry;
   bool _isSavingComment = false;
-  late String _selectedAuthor;
 
   @override
   void initState() {
     super.initState();
     _entry = widget.entry;
-    _selectedAuthor = widget.profile.currentUserPronoun;
   }
 
   @override
@@ -1695,7 +1940,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
       final updatedEntry = await widget.onAddComment(
         _entry.id,
         DiaryComment(
-          author: _selectedAuthor,
+          author: widget.profile.currentUserPronoun,
           content: content,
           createdAt: DateTime.now(),
         ),
@@ -1797,6 +2042,10 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
+                  DiaryBadge(
+                    label: _entry.author,
+                    tone: DiaryBadgeTone.sand,
+                  ),
                   DiaryBadge(label: _entry.mood),
                   DiaryBadge(
                     label: formatDiaryDate(_entry.createdAt),
@@ -1838,20 +2087,11 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [widget.profile.currentUserPronoun, widget.profile.partnerPronoun].map((author) {
-                      return ChoiceChip(
-                        label: Text(author),
-                        selected: _selectedAuthor == author,
-                        onSelected: (_) {
-                          setState(() {
-                            _selectedAuthor = author;
-                          });
-                        },
-                      );
-                    }).toList(),
+                  Text(
+                    '将以 ${widget.profile.currentUserPronoun} 的身份发表评论。',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
                   ),
                   const SizedBox(height: 14),
                   TextField(
@@ -1896,11 +2136,13 @@ class CreateEntryPage extends StatefulWidget {
   const CreateEntryPage({
     super.key,
     required this.storage,
+    required this.profile,
     this.initialEntry,
     this.rootDirectoryPath,
   });
 
   final DiaryStorage storage;
+  final CoupleProfile profile;
   final DiaryEntry? initialEntry;
   final String? rootDirectoryPath;
 
@@ -1920,6 +2162,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
   bool _isPreparingDraft = true;
   List<DiaryAttachment> _attachments = [];
   DiaryDraft? _lastSavedDraft;
+  late String _entryAuthor;
 
   bool get _isEditMode => widget.initialEntry != null;
 
@@ -1934,6 +2177,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
     );
     _selectedDate = widget.initialEntry?.createdAt ?? DateTime.now();
     _selectedMood = widget.initialEntry?.mood ?? kDiaryMoods.first;
+    _entryAuthor = widget.initialEntry?.author ?? widget.profile.currentUserPronoun;
     _attachments = List<DiaryAttachment>.from(
       widget.initialEntry?.attachments ?? const [],
     );
@@ -2245,6 +2489,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
 
     final entry = DiaryEntry(
       id: widget.initialEntry?.id ?? 'entry_${now.microsecondsSinceEpoch}',
+      author: _entryAuthor,
       title: title.isEmpty ? _guessTitle(content) : title,
       content: content,
       mood: _selectedMood,
@@ -2358,6 +2603,16 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                 ),
                 const SizedBox(height: 20),
                 DiaryPanel(
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      DiaryBadge(label: _entryAuthor),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                DiaryPanel(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2403,6 +2658,21 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _isPickingImages ? null : _pickImages,
+                          icon: const Icon(Icons.add_photo_alternate_rounded),
+                          label: Text(
+                            _isPickingImages
+                                ? '正在处理照片...'
+                                : _attachments.isEmpty
+                                    ? '添加照片'
+                                    : '继续添加照片（已添加 ${_attachments.length} 张）',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
@@ -2423,16 +2693,6 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                         onPressed: _pickDate,
                         icon: const Icon(Icons.calendar_month_rounded),
                         label: Text('日记日期：${formatDiaryDate(_selectedDate)}'),
-                      ),
-                      const SizedBox(height: 16),
-                      OutlinedButton.icon(
-                        onPressed: _isPickingImages ? null : _pickImages,
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: Text(
-                          _attachments.isEmpty
-                              ? (_isPickingImages ? '处理中...' : '添加照片')
-                              : '已添加 ${_attachments.length} 张照片',
-                        ),
                       ),
                       if (_attachments.isNotEmpty) ...[
                         const SizedBox(height: 14),
@@ -3159,9 +3419,17 @@ class _JianguoyunConfigFormData {
 }
 
 class _OneDriveConfigFormData {
-  const _OneDriveConfigFormData({required this.remoteFolder});
+  const _OneDriveConfigFormData({
+    required this.remoteFolder,
+    required this.syncOnWrite,
+    required this.minimumSyncIntervalMinutes,
+    required this.maxDestructiveActions,
+  });
 
   final String remoteFolder;
+  final bool syncOnWrite;
+  final int minimumSyncIntervalMinutes;
+  final int maxDestructiveActions;
 }
 
 class _OneDriveConfigPage extends StatefulWidget {
@@ -3175,6 +3443,9 @@ class _OneDriveConfigPage extends StatefulWidget {
 
 class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
   late final TextEditingController _remoteFolderController;
+  late final TextEditingController _minimumIntervalController;
+  late final TextEditingController _maxDestructiveActionsController;
+  late bool _syncOnWrite;
 
   @override
   void initState() {
@@ -3182,11 +3453,20 @@ class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
     _remoteFolderController = TextEditingController(
       text: widget.defaults.remoteFolder,
     );
+    _minimumIntervalController = TextEditingController(
+      text: widget.defaults.minimumSyncIntervalMinutes.toString(),
+    );
+    _maxDestructiveActionsController = TextEditingController(
+      text: widget.defaults.maxDestructiveActions.toString(),
+    );
+    _syncOnWrite = widget.defaults.syncOnWrite;
   }
 
   @override
   void dispose() {
     _remoteFolderController.dispose();
+    _minimumIntervalController.dispose();
+    _maxDestructiveActionsController.dispose();
     super.dispose();
   }
 
@@ -3208,7 +3488,7 @@ class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
             const DiaryHero(
               eyebrow: '同步设置',
               title: '调整 OneDrive 远端目录',
-              subtitle: '这个目录会作为当前设备在 OneDrive App Folder 下的同步位置。',
+              subtitle: '这个目录会作为当前设备在 OneDrive 应用专属目录下的同步位置。',
             ),
             const SizedBox(height: 20),
             DiaryPanel(
@@ -3240,9 +3520,190 @@ class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
                     : _remoteFolderController.text.trim();
                 Navigator.of(
                   context,
-                ).pop(_OneDriveConfigFormData(remoteFolder: remoteFolder));
+                ).pop(
+                  _OneDriveConfigFormData(
+                    remoteFolder: remoteFolder,
+                    syncOnWrite: widget.defaults.syncOnWrite,
+                    minimumSyncIntervalMinutes:
+                        widget.defaults.minimumSyncIntervalMinutes,
+                    maxDestructiveActions: widget.defaults.maxDestructiveActions,
+                  ),
+                );
               },
               child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OneDriveSyncSettingsPage extends StatefulWidget {
+  const _OneDriveSyncSettingsPage({
+    required this.defaults,
+    required this.onDisconnect,
+  });
+
+  final _OneDriveConfigFormData defaults;
+  final Future<bool> Function() onDisconnect;
+
+  @override
+  State<_OneDriveSyncSettingsPage> createState() =>
+      _OneDriveSyncSettingsPageState();
+}
+
+class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
+  late final TextEditingController _remoteFolderController;
+  late final TextEditingController _minimumIntervalController;
+  late final TextEditingController _maxDestructiveActionsController;
+  late bool _syncOnWrite;
+
+  @override
+  void initState() {
+    super.initState();
+    _remoteFolderController = TextEditingController(
+      text: widget.defaults.remoteFolder,
+    );
+    _minimumIntervalController = TextEditingController(
+      text: widget.defaults.minimumSyncIntervalMinutes.toString(),
+    );
+    _maxDestructiveActionsController = TextEditingController(
+      text: widget.defaults.maxDestructiveActions.toString(),
+    );
+    _syncOnWrite = widget.defaults.syncOnWrite;
+  }
+
+  @override
+  void dispose() {
+    _remoteFolderController.dispose();
+    _minimumIntervalController.dispose();
+    _maxDestructiveActionsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _disconnect() async {
+    final disconnected = await widget.onDisconnect();
+    if (disconnected && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('OneDrive 设置'),
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ),
+      body: DiaryPage(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const DiaryHero(
+              eyebrow: '同步设置',
+              title: '控制 OneDrive 同步',
+              subtitle: '默认只手动同步。自动同步需要明确打开，并且会受最小间隔和删除保护限制。',
+            ),
+            const SizedBox(height: 20),
+            DiaryPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _remoteFolderController,
+                    decoration: const InputDecoration(
+                      labelText: '远端目录',
+                      hintText: '默认 love_diary',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '两台设备必须使用同一个目录名。目录切换后，建议先手动同步一次。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                  const SizedBox(height: 18),
+                  SwitchListTile(
+                    value: _syncOnWrite,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('写入后强制同步'),
+                    subtitle: const Text('开启后，发布、评论和删除会在前台等待 OneDrive 同步完成。'),
+                    onChanged: (value) {
+                      setState(() {
+                        _syncOnWrite = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _minimumIntervalController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '自动同步最小间隔（分钟）',
+                      hintText: '默认 0，表示每次写入都同步',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _maxDestructiveActionsController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '删除保护阈值',
+                      hintText: '默认 3',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '一次同步里的删除动作超过这个数量时会被拦截，避免误删扩散到云端。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton(
+                  onPressed: () {
+                    final remoteFolder =
+                        _remoteFolderController.text.trim().isEmpty
+                            ? 'love_diary'
+                            : _remoteFolderController.text.trim();
+                    final minimumInterval =
+                        int.tryParse(_minimumIntervalController.text.trim()) ??
+                            10;
+                    final maxDestructiveActions =
+                        int.tryParse(_maxDestructiveActionsController.text.trim()) ??
+                            3;
+                    Navigator.of(context).pop(
+                      _OneDriveConfigFormData(
+                        remoteFolder: remoteFolder,
+                        syncOnWrite: _syncOnWrite,
+                        minimumSyncIntervalMinutes:
+                            minimumInterval < 1 ? 1 : minimumInterval,
+                        maxDestructiveActions:
+                            maxDestructiveActions < 0 ? 0 : maxDestructiveActions,
+                      ),
+                    );
+                  },
+                  child: const Text('保存'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _disconnect,
+                  icon: const Icon(Icons.link_off_rounded),
+                  label: const Text('断开连接'),
+                ),
+              ],
             ),
           ],
         ),
