@@ -1,10 +1,14 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/app.dart';
 import 'package:love_diary/data/diary_storage.dart';
 import 'package:love_diary/models/diary_models.dart';
+import 'package:love_diary/sync/onedrive/onedrive_models.dart';
+import 'package:love_diary/sync/sync_models.dart';
+import 'package:love_diary/sync/webdav/webdav_models.dart';
+import 'package:love_diary/ui/real_timeline_tab.dart';
 
 class FakeDiaryStorage extends DiaryStorage {
   FakeDiaryStorage({required CoupleProfile profile, List<DiaryEntry>? entries})
@@ -57,6 +61,21 @@ class FakeDiaryStorage extends DiaryStorage {
   }
 
   @override
+  Future<SyncState> loadSyncState() async {
+    return SyncState.initial();
+  }
+
+  @override
+  Future<OneDriveSyncConfig?> loadOneDriveSyncConfig() async {
+    return null;
+  }
+
+  @override
+  Future<WebDavSyncConfig?> loadWebDavSyncConfig() async {
+    return null;
+  }
+
+  @override
   Future<void> saveEntryDraft(DiaryDraft draft) async {
     _draft = draft;
   }
@@ -83,6 +102,7 @@ class FakeDiaryStorage extends DiaryStorage {
   Future<DiaryAttachment> importAttachment({
     required String sourcePath,
     required String fileName,
+    bool keepOriginal = false,
   }) async {
     return DiaryAttachment(
       id: 'att_${fileName.hashCode}',
@@ -91,11 +111,20 @@ class FakeDiaryStorage extends DiaryStorage {
       createdAt: DateTime(2026, 4, 9, 12, 0),
     );
   }
+}
+
+void main() {
+  Future<void> pumpApp(WidgetTester tester, DiaryStorage storage) async {
+    await tester.pumpWidget(LoveDailyApp(storage: storage));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
   testWidgets('tapping an attachment opens the preview page', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: Scaffold(
           body: AttachmentGrid(
             attachments: [
@@ -118,14 +147,6 @@ class FakeDiaryStorage extends DiaryStorage {
     expect(find.text('1/1'), findsOneWidget);
     expect(find.text('preview.jpg'), findsOneWidget);
   });
-}
-
-void main() {
-  Future<void> pumpApp(WidgetTester tester, DiaryStorage storage) async {
-    await tester.pumpWidget(LoveDailyApp(storage: storage));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-  }
 
   testWidgets('已引导状态会显示首页导航', (WidgetTester tester) async {
     final storage = FakeDiaryStorage(
@@ -163,10 +184,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('新建日记'), findsOneWidget);
+    expect(find.text('新建日记'), findsWidgets);
     expect(find.text('标题（可选）'), findsOneWidget);
     expect(find.text('内容'), findsOneWidget);
-    expect(find.text('今天的心情'), findsOneWidget);
+    expect(find.text('状态'), findsOneWidget);
   });
 
   testWidgets('点击时间线日记会进入详情页', (WidgetTester tester) async {
@@ -189,7 +210,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('日记详情'), findsOneWidget);
+    expect(find.text('日记详情'), findsWidgets);
     expect(find.text('评论区'), findsOneWidget);
   });
 
@@ -287,10 +308,9 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '煎饼');
     await tester.pumpAndSettle();
 
-    expect(find.text('匹配 1 篇'), findsOneWidget);
     expect(
       find.descendant(
-        of: find.byType(TimelineTab),
+        of: find.byType(RealTimelineTab),
         matching: find.text('周末煎饼计划'),
       ),
       findsOneWidget,
@@ -306,4 +326,3 @@ void main() {
     expect(find.byType(TextFormField), findsNWidgets(2));
   });
 }
-

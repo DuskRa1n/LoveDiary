@@ -3,22 +3,36 @@ import 'sync_models.dart';
 import 'sync_remote_source.dart';
 
 class DiarySyncService {
-  const DiarySyncService({required this.storage, required this.remoteSource});
+  const DiarySyncService({
+    required this.storage,
+    required this.remoteSource,
+    this.attachmentPolicy = const AttachmentSyncPolicy(),
+  });
 
   final DiaryStorage storage;
   final DiarySyncRemoteSource remoteSource;
+  final AttachmentSyncPolicy attachmentPolicy;
 
   Future<SyncPlan> buildPlan() async {
-    final localFiles = await storage.listSyncFiles();
+    final localFiles = (await storage.listSyncFiles())
+        .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
+        .toList();
     final syncState = await storage.loadSyncState();
-    final tombstones = await storage.loadTombstones();
+    final tombstones = (await storage.loadTombstones())
+        .where(
+          (item) => attachmentPolicy.includeTombstonePath(item.relativePath),
+        )
+        .toList();
     final remoteSnapshot = await remoteSource.fetchSnapshot();
+    final remoteFiles = remoteSnapshot.files
+        .where((file) => attachmentPolicy.includeRemotePath(file.relativePath))
+        .toList();
 
     final localByPath = {
       for (final file in localFiles) file.relativePath: file,
     };
     final remoteByPath = {
-      for (final file in remoteSnapshot.files) file.relativePath: file,
+      for (final file in remoteFiles) file.relativePath: file,
     };
     final tombstonePaths = {
       for (final tombstone in tombstones) tombstone.relativePath,
@@ -153,7 +167,7 @@ class DiarySyncService {
     return SyncPlan(
       actions: actions,
       localFiles: localFiles,
-      remoteFiles: remoteSnapshot.files,
+      remoteFiles: remoteFiles,
     );
   }
 

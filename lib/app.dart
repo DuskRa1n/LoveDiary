@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -175,8 +175,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   DateTime? _lastSyncedAt;
   double? _oneDriveSyncProgress;
   String? _oneDriveSyncLabel;
-  double? _jianguoyunSyncProgress;
-  String? _jianguoyunSyncLabel;
   String _syncWaitingMessage = randomSyncWaitingMessage();
   OneDriveSyncConfig? _oneDriveConfig;
   WebDavSyncConfig? _jianguoyunConfig;
@@ -342,7 +340,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
             TextButton(
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: diagnostic));
-                if (mounted) {
+                if (context.mounted && mounted) {
                   Navigator.of(context).pop();
                   _showMessage('诊断内容已复制');
                 }
@@ -453,9 +451,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
     }
 
-    return today.subtract(const Duration(days: 1)).add(
-          const Duration(hours: 18),
-        );
+    return today
+        .subtract(const Duration(days: 1))
+        .add(const Duration(hours: 18));
   }
 
   Future<void> _persistProfile() => widget.storage.saveProfile(_profile);
@@ -505,7 +503,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
 
     final message = initialEntry == null ? '日记已保存到本地' : '日记已更新';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
     unawaited(_triggerAutoSync(reason: initialEntry == null ? '发布日记' : '更新日记'));
     return savedEntry;
   }
@@ -543,9 +543,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已删除《${entry.title}》')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已删除《${entry.title}》')));
   }
 
   Future<void> _openProfileEditor({required bool firstSetup}) async {
@@ -571,9 +571,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
   Future<void> _openDustbin() async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => DustbinPage(storage: widget.storage),
-      ),
+      MaterialPageRoute(builder: (_) => DustbinPage(storage: widget.storage)),
     );
 
     if (changed == true) {
@@ -661,6 +659,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       minimumSyncIntervalMinutes:
           _oneDriveConfig?.minimumSyncIntervalMinutes ?? 0,
       maxDestructiveActions: _oneDriveConfig?.maxDestructiveActions ?? 3,
+      syncOriginals: _oneDriveConfig?.syncOriginals ?? false,
+      downloadOriginals: _oneDriveConfig?.downloadOriginals ?? false,
+      localOriginalRetentionDays:
+          _oneDriveConfig?.localOriginalRetentionDays ?? 30,
     );
     final formData = await _showOneDriveConfigPage(defaults);
     if (formData == null) {
@@ -677,6 +679,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       syncOnWrite: formData.syncOnWrite,
       minimumSyncIntervalMinutes: formData.minimumSyncIntervalMinutes,
       maxDestructiveActions: formData.maxDestructiveActions,
+      syncOriginals: formData.syncOriginals,
+      downloadOriginals: formData.downloadOriginals,
+      localOriginalRetentionDays: formData.localOriginalRetentionDays,
     );
     await widget.storage.saveOneDriveSyncConfig(updated);
     if (!mounted) {
@@ -690,7 +695,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _syncWithOneDrive({bool interactive = true}) async {
-    if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
+    if (_oneDriveConfig == null ||
+        _isConnectingOneDrive ||
+        _isSyncingOneDrive) {
       return;
     }
 
@@ -732,10 +739,17 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         safetyPolicy: SyncSafetyPolicy(
           maxDestructiveActions: _oneDriveConfig!.maxDestructiveActions,
         ),
+        attachmentPolicy: AttachmentSyncPolicy(
+          syncOriginals: _oneDriveConfig!.syncOriginals,
+          downloadOriginals: _oneDriveConfig!.downloadOriginals,
+        ),
         onProgress: (progress, label) {
           final friendlyLabel = _friendlySyncMessage(progress);
           unawaited(
-            SyncForegroundGuard.update(label: friendlyLabel, progress: progress),
+            SyncForegroundGuard.update(
+              label: friendlyLabel,
+              progress: progress,
+            ),
           );
           if (!mounted) {
             return;
@@ -804,7 +818,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<bool> _disconnectOneDrive() async {
-    if (_oneDriveConfig == null || _isConnectingOneDrive || _isSyncingOneDrive) {
+    if (_oneDriveConfig == null ||
+        _isConnectingOneDrive ||
+        _isSyncingOneDrive) {
       return false;
     }
 
@@ -850,7 +866,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
 
     final defaults = _JianguoyunConfigFormData(
-      serverUrl: _jianguoyunConfig?.serverUrl ?? 'https://dav.jianguoyun.com/dav/',
+      serverUrl:
+          _jianguoyunConfig?.serverUrl ?? 'https://dav.jianguoyun.com/dav/',
       username: _jianguoyunConfig?.username ?? '',
       password: _jianguoyunConfig?.password ?? '',
       remoteFolder: _jianguoyunConfig?.remoteFolder ?? 'love_diary',
@@ -900,7 +917,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _syncWithJianguoyun() async {
-    if (_jianguoyunConfig == null || _isSyncingJianguoyun || _isEditingJianguoyun) {
+    if (_jianguoyunConfig == null ||
+        _isSyncingJianguoyun ||
+        _isEditingJianguoyun) {
       return;
     }
 
@@ -956,7 +975,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _triggerAutoSync({required String reason}) async {
-    if (_isConnectingOneDrive || _isSyncingOneDrive || _isEditingJianguoyun || _isSyncingJianguoyun) {
+    if (_isConnectingOneDrive ||
+        _isSyncingOneDrive ||
+        _isEditingJianguoyun ||
+        _isSyncingJianguoyun) {
       return;
     }
 
@@ -1002,11 +1024,12 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     required DiarySyncRemoteSource remoteSource,
     required void Function(bool value) setSyncing,
   }) async {
-    final result = await Navigator.of(context).push<SyncConflictResolutionResult>(
-      MaterialPageRoute(
-        builder: (_) => SyncConflictPage(conflictPaths: conflictPaths),
-      ),
-    );
+    final result = await Navigator.of(context)
+        .push<SyncConflictResolutionResult>(
+          MaterialPageRoute(
+            builder: (_) => SyncConflictPage(conflictPaths: conflictPaths),
+          ),
+        );
 
     if (result == null || !mounted) {
       return;
@@ -1040,7 +1063,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
     } catch (error) {
       if (mounted) {
-        _showMessage('处理冲突失败：' + error.toString());
+        _showMessage('处理冲突失败：$error');
       }
     } finally {
       setSyncing(false);
@@ -1100,17 +1123,25 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     try {
       final remoteSource = _oneDriveRemoteSource();
       final snapshot = await remoteSource.fetchSnapshot();
-      if (snapshot.files.isEmpty) {
+      final attachmentPolicy = AttachmentSyncPolicy(
+        syncOriginals: _oneDriveConfig!.syncOriginals,
+        downloadOriginals: _oneDriveConfig!.downloadOriginals,
+      );
+      final filesToRestore = snapshot.files
+          .where(
+            (file) => attachmentPolicy.includeRemotePath(file.relativePath),
+          )
+          .toList();
+      if (filesToRestore.isEmpty) {
         if (mounted) {
           _showMessage('OneDrive 里还没有可恢复的数据。');
         }
         return;
       }
 
-      for (final file in snapshot.files) {
-        final targetAbsolutePath = await widget.storage.resolveSyncFileAbsolutePath(
-          file.relativePath,
-        );
+      for (final file in filesToRestore) {
+        final targetAbsolutePath = await widget.storage
+            .resolveSyncFileAbsolutePath(file.relativePath);
         final targetFile = File(targetAbsolutePath);
         final parent = targetFile.parent;
         if (!await parent.exists()) {
@@ -1123,7 +1154,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         );
       }
 
-      final localFiles = await widget.storage.listSyncFiles();
+      final localFiles = (await widget.storage.listSyncFiles())
+          .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
+          .toList();
       await widget.storage.saveSyncState(
         SyncState(
           lastSyncedAt: DateTime.now(),
@@ -1132,7 +1165,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
             for (final file in localFiles) file.relativePath: file.fingerprint,
           },
           lastKnownRemoteRevisions: {
-            for (final file in snapshot.files) file.relativePath: file.revision,
+            for (final file in filesToRestore) file.relativePath: file.revision,
           },
         ),
       );
@@ -1157,8 +1190,11 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
     }
   }
+
   Future<void> _disconnectJianguoyun() async {
-    if (_jianguoyunConfig == null || _isEditingJianguoyun || _isSyncingJianguoyun) {
+    if (_jianguoyunConfig == null ||
+        _isEditingJianguoyun ||
+        _isSyncingJianguoyun) {
       return;
     }
 
@@ -1217,13 +1253,17 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         builder: (_) => _OneDriveSyncSettingsPage(
           defaults: defaults,
           onDisconnect: _disconnectOneDrive,
+          onCleanLocalOriginals: (olderThan) =>
+              widget.storage.purgeLocalOriginals(olderThan: olderThan),
         ),
       ),
     );
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showSyncResultDialog({
@@ -1301,26 +1341,26 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
                   Text(
                     '正在同步',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
-                        ),
+                      color: DiaryPalette.ink,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
                     _syncWaitingMessage,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: DiaryPalette.wine,
-                          height: 1.5,
-                        ),
+                      color: DiaryPalette.wine,
+                      height: 1.5,
+                    ),
                   ),
                   const SizedBox(height: 18),
                   LinearProgressIndicator(value: _oneDriveSyncProgress),
                   const SizedBox(height: 10),
                   Text(
                     _oneDriveSyncLabel ?? '正在轻轻整理云端记忆...',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
                   ),
                 ],
               ),
@@ -1522,9 +1562,9 @@ class _DustbinPageState extends State<DustbinPage> {
     setState(() {
       _processingEntryId = null;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已恢复 ${deletedEntry.entry.title}')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已恢复 ${deletedEntry.entry.title}')));
   }
 
   Future<void> _deleteForever(DeletedDiaryEntry deletedEntry) async {
@@ -1649,7 +1689,9 @@ class _DustbinPageState extends State<DustbinPage> {
                                   const SizedBox(height: 8),
                                   Text(
                                     entry.summary,
-                                    style: Theme.of(context).textTheme.bodyMedium
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
                                         ?.copyWith(
                                           color: DiaryPalette.wine,
                                           height: 1.5,
@@ -1675,7 +1717,8 @@ class _DustbinPageState extends State<DustbinPage> {
                                         tone: DiaryBadgeTone.ink,
                                       ),
                                       DiaryBadge(
-                                        label: '剩余 ${_remainingDays(deletedEntry)} 天',
+                                        label:
+                                            '剩余 ${_remainingDays(deletedEntry)} 天',
                                         tone: DiaryBadgeTone.sand,
                                       ),
                                     ],
@@ -1695,7 +1738,8 @@ class _DustbinPageState extends State<DustbinPage> {
                                       OutlinedButton.icon(
                                         onPressed: isProcessing
                                             ? null
-                                            : () => _deleteForever(deletedEntry),
+                                            : () =>
+                                                  _deleteForever(deletedEntry),
                                         icon: const Icon(
                                           Icons.delete_forever_rounded,
                                         ),
@@ -1816,56 +1860,64 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-              DiaryHero(
-                eyebrow: widget.isFirstSetup ? '初始设置' : '编辑资料',
-                title: widget.isFirstSetup ? '先把资料填好' : '更新资料',
-                subtitle: widget.isFirstSetup
-                    ? '把名字和在一起的日期填好，首页和统计会自动带上这些信息。'
-                    : '这些信息会影响首页展示、统计和纪念日标记。',
-              ),
-              const SizedBox(height: 20),
-              DiaryPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextFormField(
-                      controller: _maleNameController,
-                      decoration: const InputDecoration(labelText: '他叫什么'),
-                      validator: _nonEmptyValidator,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _femaleNameController,
-                      decoration: const InputDecoration(labelText: '她叫什么'),
-                      validator: _nonEmptyValidator,
-                    ),
-                    const SizedBox(height: 16),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(value: 'male', label: Text('我是他')),
-                        ButtonSegment<String>(value: 'female', label: Text('我是她')),
-                      ],
-                      selected: {_currentUserRole},
-                      onSelectionChanged: (selection) {
-                        setState(() {
-                          _currentUserRole = selection.first;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: _pickTogetherSince,
-                      icon: const Icon(Icons.favorite_rounded),
-                      label: Text('在一起的日期：${formatDiaryDate(_togetherSince)}'),
-                    ),
-                  ],
+                DiaryHero(
+                  eyebrow: widget.isFirstSetup ? '初始设置' : '编辑资料',
+                  title: widget.isFirstSetup ? '先把资料填好' : '更新资料',
+                  subtitle: widget.isFirstSetup
+                      ? '把名字和在一起的日期填好，首页和统计会自动带上这些信息。'
+                      : '这些信息会影响首页展示、统计和纪念日标记。',
                 ),
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _submit,
-                child: Text(widget.isFirstSetup ? '开始记录' : '保存资料'),
-              ),
+                const SizedBox(height: 20),
+                DiaryPanel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFormField(
+                        controller: _maleNameController,
+                        decoration: const InputDecoration(labelText: '他叫什么'),
+                        validator: _nonEmptyValidator,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _femaleNameController,
+                        decoration: const InputDecoration(labelText: '她叫什么'),
+                        validator: _nonEmptyValidator,
+                      ),
+                      const SizedBox(height: 16),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment<String>(
+                            value: 'male',
+                            label: Text('我是他'),
+                          ),
+                          ButtonSegment<String>(
+                            value: 'female',
+                            label: Text('我是她'),
+                          ),
+                        ],
+                        selected: {_currentUserRole},
+                        onSelectionChanged: (selection) {
+                          setState(() {
+                            _currentUserRole = selection.first;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _pickTogetherSince,
+                        icon: const Icon(Icons.favorite_rounded),
+                        label: Text(
+                          '在一起的日期：${formatDiaryDate(_togetherSince)}',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _submit,
+                  child: Text(widget.isFirstSetup ? '开始记录' : '保存资料'),
+                ),
               ],
             ),
           ),
@@ -1962,9 +2014,9 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
       setState(() {
         _isSavingComment = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('评论保存失败，请稍后再试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('评论保存失败，请稍后再试')));
     }
   }
 
@@ -2042,10 +2094,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  DiaryBadge(
-                    label: _entry.author,
-                    tone: DiaryBadgeTone.sand,
-                  ),
+                  DiaryBadge(label: _entry.author, tone: DiaryBadgeTone.sand),
                   DiaryBadge(label: _entry.mood),
                   DiaryBadge(
                     label: formatDiaryDate(_entry.createdAt),
@@ -2069,7 +2118,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                 title: '附图',
                 subtitle: '先保留本地图片和预览，后续再继续优化同步体验。',
               ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
               DiaryPanel(
                 child: AttachmentGrid(
                   attachments: _entry.attachments,
@@ -2089,9 +2138,9 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                 children: [
                   Text(
                     '将以 ${widget.profile.currentUserPronoun} 的身份发表评论。',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: DiaryPalette.wine),
                   ),
                   const SizedBox(height: 14),
                   TextField(
@@ -2124,7 +2173,9 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
                 icon: Icons.chat_bubble_outline_rounded,
               )
             else
-              ..._entry.comments.map((comment) => CommentCard(comment: comment)),
+              ..._entry.comments.map(
+                (comment) => CommentCard(comment: comment),
+              ),
           ],
         ),
       ),
@@ -2177,7 +2228,8 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
     );
     _selectedDate = widget.initialEntry?.createdAt ?? DateTime.now();
     _selectedMood = widget.initialEntry?.mood ?? kDiaryMoods.first;
-    _entryAuthor = widget.initialEntry?.author ?? widget.profile.currentUserPronoun;
+    _entryAuthor =
+        widget.initialEntry?.author ?? widget.profile.currentUserPronoun;
     _attachments = List<DiaryAttachment>.from(
       widget.initialEntry?.attachments ?? const [],
     );
@@ -2271,8 +2323,9 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
 
     try {
       final files = await _imagePicker.pickMultiImage(
-        imageQuality:
-            importMode == _AttachmentImportMode.compressed ? 85 : null,
+        imageQuality: importMode == _AttachmentImportMode.compressed
+            ? 85
+            : null,
         limit: 6,
       );
 
@@ -2291,6 +2344,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
         final savedAttachment = await widget.storage.importAttachment(
           sourcePath: file.path,
           fileName: '${index}_${file.name}',
+          keepOriginal: importMode == _AttachmentImportMode.original,
         );
         savedAttachments.add(savedAttachment);
       }
@@ -2310,14 +2364,14 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
       setState(() {
         _isPickingImages = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('图片导入失败，请检查权限或稍后再试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('图片导入失败，请检查权限或稍后再试')));
     }
   }
 
   Future<void> _removeAttachment(DiaryAttachment attachment) async {
-    if (attachment.path.startsWith('drafts/')) {
+    if (_isTemporaryAttachment(attachment)) {
       await widget.storage.deleteAttachments([attachment]);
     }
 
@@ -2432,23 +2486,22 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
       builder: (context) {
         return AlertDialog(
           title: Text(_isEditMode ? '放弃本次修改？' : '离开前要怎么处理？'),
-          content: Text(
-            _isEditMode
-                ? '你刚刚修改的内容还没有保存。'
-                : '这篇日记还没有保存，可以先存成草稿。',
-          ),
+          content: Text(_isEditMode ? '你刚刚修改的内容还没有保存。' : '这篇日记还没有保存，可以先存成草稿。'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(_EditorExitAction.cancel),
+              onPressed: () =>
+                  Navigator.of(context).pop(_EditorExitAction.cancel),
               child: const Text('继续编辑'),
             ),
             if (!_isEditMode)
               TextButton(
-                onPressed: () => Navigator.of(context).pop(_EditorExitAction.saveDraft),
+                onPressed: () =>
+                    Navigator.of(context).pop(_EditorExitAction.saveDraft),
                 child: const Text('存为草稿'),
               ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(_EditorExitAction.discard),
+              onPressed: () =>
+                  Navigator.of(context).pop(_EditorExitAction.discard),
               child: const Text('放弃'),
             ),
           ],
@@ -2532,7 +2585,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
 
   Future<void> _discardTemporaryAttachments() async {
     final temporaryAttachments = _attachments
-        .where((attachment) => attachment.path.startsWith('drafts/'))
+        .where(_isTemporaryAttachment)
         .toList();
     await widget.storage.deleteAttachments(temporaryAttachments);
     if (!_isEditMode) {
@@ -2551,11 +2604,19 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
     for (var index = 0; index < left.length; index++) {
       final current = left[index];
       final baseline = right[index];
-      if (current.id != baseline.id || current.path != baseline.path) {
+      if (current.id != baseline.id ||
+          current.path != baseline.path ||
+          current.thumbnailPath != baseline.thumbnailPath ||
+          current.previewPath != baseline.previewPath ||
+          current.originalPath != baseline.originalPath) {
         return false;
       }
     }
     return true;
+  }
+
+  bool _isTemporaryAttachment(DiaryAttachment attachment) {
+    return attachment.storedPaths.any((path) => path.startsWith('drafts/'));
   }
 
   String _guessTitle(String content) {
@@ -2571,8 +2632,14 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    return WillPopScope(
-      onWillPop: _confirmExit,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) {
+          return;
+        }
+        await _handleBack();
+      },
       child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
@@ -2606,9 +2673,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                   child: Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: [
-                      DiaryBadge(label: _entryAuthor),
-                    ],
+                    children: [DiaryBadge(label: _entryAuthor)],
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -2653,7 +2718,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                   title: '状态',
                   subtitle: '心情、日期和图片先决定这篇日记的外轮廓。',
                 ),
-            const SizedBox(height: 12),
+                const SizedBox(height: 12),
                 DiaryPanel(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2667,8 +2732,8 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                             _isPickingImages
                                 ? '正在处理照片...'
                                 : _attachments.isEmpty
-                                    ? '添加照片'
-                                    : '继续添加照片（已添加 ${_attachments.length} 张）',
+                                ? '添加照片'
+                                : '继续添加照片（已添加 ${_attachments.length} 张）',
                           ),
                         ),
                       ),
@@ -3125,6 +3190,7 @@ class DiaryAttachmentImage extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.width,
     this.height,
+    this.preferOriginal = false,
   });
 
   final DiaryAttachment attachment;
@@ -3132,19 +3198,23 @@ class DiaryAttachmentImage extends StatelessWidget {
   final BoxFit fit;
   final double? width;
   final double? height;
+  final bool preferOriginal;
 
   @override
   Widget build(BuildContext context) {
-    if (attachment.path.isEmpty || kIsWeb) {
+    final path = preferOriginal
+        ? attachment.originalOrFallbackPath
+        : attachment.previewOrFallbackPath;
+    if (path.isEmpty || kIsWeb) {
       return _AttachmentPlaceholder(width: width, height: height);
     }
 
     return Image.file(
-      File(resolveStoredPath(rootDirectoryPath, attachment.path)),
+      File(resolveStoredPath(rootDirectoryPath, path)),
       width: width,
       height: height,
       fit: fit,
-      errorBuilder: (_, __, ___) =>
+      errorBuilder: (_, _, _) =>
           _AttachmentPlaceholder(width: width, height: height),
     );
   }
@@ -3218,6 +3288,7 @@ class _AttachmentPreviewPageState extends State<AttachmentPreviewPage> {
                       attachment: widget.attachments[index],
                       rootDirectoryPath: widget.rootDirectoryPath,
                       fit: BoxFit.contain,
+                      preferOriginal: true,
                     ),
                   ),
                 ),
@@ -3278,10 +3349,7 @@ class _AttachmentPlaceholder extends StatelessWidget {
       height: height,
       color: const Color(0xFFFFEFF5),
       alignment: Alignment.center,
-      child: const Icon(
-        Icons.image_outlined,
-        color: Color(0xFFC85C8E),
-      ),
+      child: const Icon(Icons.image_outlined, color: Color(0xFFC85C8E)),
     );
   }
 }
@@ -3289,8 +3357,6 @@ class _AttachmentPlaceholder extends StatelessWidget {
 enum _EditorExitAction { cancel, saveDraft, discard }
 
 enum _AttachmentImportMode { compressed, original }
-
-enum _EntryCardAction { edit, delete }
 
 class CommentCard extends StatelessWidget {
   const CommentCard({super.key, required this.comment});
@@ -3330,9 +3396,9 @@ class CommentCard extends StatelessWidget {
                 ),
                 Text(
                   '${formatDiaryShortDate(comment.createdAt)} ${formatDiaryTime(comment.createdAt)}',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: DiaryPalette.wine,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelMedium?.copyWith(color: DiaryPalette.wine),
                 ),
               ],
             ),
@@ -3424,129 +3490,31 @@ class _OneDriveConfigFormData {
     required this.syncOnWrite,
     required this.minimumSyncIntervalMinutes,
     required this.maxDestructiveActions,
+    required this.syncOriginals,
+    required this.downloadOriginals,
+    required this.localOriginalRetentionDays,
   });
 
   final String remoteFolder;
   final bool syncOnWrite;
   final int minimumSyncIntervalMinutes;
   final int maxDestructiveActions;
-}
-
-class _OneDriveConfigPage extends StatefulWidget {
-  const _OneDriveConfigPage({required this.defaults});
-
-  final _OneDriveConfigFormData defaults;
-
-  @override
-  State<_OneDriveConfigPage> createState() => _OneDriveConfigPageState();
-}
-
-class _OneDriveConfigPageState extends State<_OneDriveConfigPage> {
-  late final TextEditingController _remoteFolderController;
-  late final TextEditingController _minimumIntervalController;
-  late final TextEditingController _maxDestructiveActionsController;
-  late bool _syncOnWrite;
-
-  @override
-  void initState() {
-    super.initState();
-    _remoteFolderController = TextEditingController(
-      text: widget.defaults.remoteFolder,
-    );
-    _minimumIntervalController = TextEditingController(
-      text: widget.defaults.minimumSyncIntervalMinutes.toString(),
-    );
-    _maxDestructiveActionsController = TextEditingController(
-      text: widget.defaults.maxDestructiveActions.toString(),
-    );
-    _syncOnWrite = widget.defaults.syncOnWrite;
-  }
-
-  @override
-  void dispose() {
-    _remoteFolderController.dispose();
-    _minimumIntervalController.dispose();
-    _maxDestructiveActionsController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('OneDrive 设置'),
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.close_rounded),
-        ),
-      ),
-      body: DiaryPage(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const DiaryHero(
-              eyebrow: '同步设置',
-              title: '调整 OneDrive 远端目录',
-              subtitle: '这个目录会作为当前设备在 OneDrive 应用专属目录下的同步位置。',
-            ),
-            const SizedBox(height: 20),
-            DiaryPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _remoteFolderController,
-                    decoration: const InputDecoration(
-                      labelText: '远端目录',
-                      hintText: '默认是 love_diary',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '建议使用固定目录名，避免不同设备同步到不同位置。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: () {
-                final remoteFolder = _remoteFolderController.text.trim().isEmpty
-                    ? 'love_diary'
-                    : _remoteFolderController.text.trim();
-                Navigator.of(
-                  context,
-                ).pop(
-                  _OneDriveConfigFormData(
-                    remoteFolder: remoteFolder,
-                    syncOnWrite: widget.defaults.syncOnWrite,
-                    minimumSyncIntervalMinutes:
-                        widget.defaults.minimumSyncIntervalMinutes,
-                    maxDestructiveActions: widget.defaults.maxDestructiveActions,
-                  ),
-                );
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  final bool syncOriginals;
+  final bool downloadOriginals;
+  final int localOriginalRetentionDays;
 }
 
 class _OneDriveSyncSettingsPage extends StatefulWidget {
   const _OneDriveSyncSettingsPage({
     required this.defaults,
     required this.onDisconnect,
+    required this.onCleanLocalOriginals,
   });
 
   final _OneDriveConfigFormData defaults;
   final Future<bool> Function() onDisconnect;
+  final Future<ImageCleanupResult> Function(Duration olderThan)
+  onCleanLocalOriginals;
 
   @override
   State<_OneDriveSyncSettingsPage> createState() =>
@@ -3557,7 +3525,11 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
   late final TextEditingController _remoteFolderController;
   late final TextEditingController _minimumIntervalController;
   late final TextEditingController _maxDestructiveActionsController;
+  late final TextEditingController _localOriginalRetentionController;
   late bool _syncOnWrite;
+  late bool _syncOriginals;
+  late bool _downloadOriginals;
+  bool _isCleaningOriginals = false;
 
   @override
   void initState() {
@@ -3571,7 +3543,12 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
     _maxDestructiveActionsController = TextEditingController(
       text: widget.defaults.maxDestructiveActions.toString(),
     );
+    _localOriginalRetentionController = TextEditingController(
+      text: widget.defaults.localOriginalRetentionDays.toString(),
+    );
     _syncOnWrite = widget.defaults.syncOnWrite;
+    _syncOriginals = widget.defaults.syncOriginals;
+    _downloadOriginals = widget.defaults.downloadOriginals;
   }
 
   @override
@@ -3579,6 +3556,7 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
     _remoteFolderController.dispose();
     _minimumIntervalController.dispose();
     _maxDestructiveActionsController.dispose();
+    _localOriginalRetentionController.dispose();
     super.dispose();
   }
 
@@ -3586,6 +3564,38 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
     final disconnected = await widget.onDisconnect();
     if (disconnected && mounted) {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _cleanLocalOriginals() async {
+    if (_isCleaningOriginals) {
+      return;
+    }
+    final retentionDays =
+        int.tryParse(_localOriginalRetentionController.text.trim()) ??
+        widget.defaults.localOriginalRetentionDays;
+    setState(() {
+      _isCleaningOriginals = true;
+    });
+    try {
+      final result = await widget.onCleanLocalOriginals(
+        Duration(days: retentionDays < 1 ? 1 : retentionDays),
+      );
+      if (!mounted) {
+        return;
+      }
+      final freedMb = (result.freedBytes / (1024 * 1024)).toStringAsFixed(1);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已清理 ${result.deletedOriginals} 张本地原图，释放 $freedMb MB'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCleaningOriginals = false;
+        });
+      }
     }
   }
 
@@ -3624,9 +3634,9 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                   const SizedBox(height: 10),
                   Text(
                     '两台设备必须使用同一个目录名。目录切换后，建议先手动同步一次。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
                   ),
                   const SizedBox(height: 18),
                   SwitchListTile(
@@ -3661,14 +3671,61 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                   const SizedBox(height: 10),
                   Text(
                     '一次同步里的删除动作超过这个数量时会被拦截，避免误删扩散到云端。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
+            DiaryPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SwitchListTile(
+                    value: _syncOriginals,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('同步原图到 OneDrive'),
+                    subtitle: const Text('关闭时只同步缩略图和预览图，旧原图会留在本机。'),
+                    onChanged: (value) {
+                      setState(() {
+                        _syncOriginals = value;
+                      });
+                    },
+                  ),
+                  SwitchListTile(
+                    value: _downloadOriginals,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('从 OneDrive 下载原图'),
+                    subtitle: const Text('关闭时新设备不会主动拉取云端原图。'),
+                    onChanged: (value) {
+                      setState(() {
+                        _downloadOriginals = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _localOriginalRetentionController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '本地原图保留天数',
+                      hintText: '默认 30',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _isCleaningOriginals
+                        ? null
+                        : _cleanLocalOriginals,
+                    icon: const Icon(Icons.cleaning_services_rounded),
+                    label: Text(_isCleaningOriginals ? '正在清理...' : '清理过期本地原图'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -3677,22 +3734,37 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                   onPressed: () {
                     final remoteFolder =
                         _remoteFolderController.text.trim().isEmpty
-                            ? 'love_diary'
-                            : _remoteFolderController.text.trim();
+                        ? 'love_diary'
+                        : _remoteFolderController.text.trim();
                     final minimumInterval =
                         int.tryParse(_minimumIntervalController.text.trim()) ??
-                            10;
+                        10;
                     final maxDestructiveActions =
-                        int.tryParse(_maxDestructiveActionsController.text.trim()) ??
-                            3;
+                        int.tryParse(
+                          _maxDestructiveActionsController.text.trim(),
+                        ) ??
+                        3;
+                    final localOriginalRetentionDays =
+                        int.tryParse(
+                          _localOriginalRetentionController.text.trim(),
+                        ) ??
+                        30;
                     Navigator.of(context).pop(
                       _OneDriveConfigFormData(
                         remoteFolder: remoteFolder,
                         syncOnWrite: _syncOnWrite,
-                        minimumSyncIntervalMinutes:
-                            minimumInterval < 1 ? 1 : minimumInterval,
-                        maxDestructiveActions:
-                            maxDestructiveActions < 0 ? 0 : maxDestructiveActions,
+                        minimumSyncIntervalMinutes: minimumInterval < 1
+                            ? 1
+                            : minimumInterval,
+                        maxDestructiveActions: maxDestructiveActions < 0
+                            ? 0
+                            : maxDestructiveActions,
+                        syncOriginals: _syncOriginals,
+                        downloadOriginals: _downloadOriginals,
+                        localOriginalRetentionDays:
+                            localOriginalRetentionDays < 1
+                            ? 1
+                            : localOriginalRetentionDays,
                       ),
                     );
                   },
@@ -3730,7 +3802,9 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
   @override
   void initState() {
     super.initState();
-    _serverUrlController = TextEditingController(text: widget.defaults.serverUrl);
+    _serverUrlController = TextEditingController(
+      text: widget.defaults.serverUrl,
+    );
     _usernameController = TextEditingController(text: widget.defaults.username);
     _passwordController = TextEditingController(text: widget.defaults.password);
     _remoteFolderController = TextEditingController(
@@ -3778,7 +3852,7 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
                       hintText: 'https://dav.jianguoyun.com/dav/',
                     ),
                   ),
-            const SizedBox(height: 12),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _usernameController,
                     decoration: const InputDecoration(
@@ -3786,7 +3860,7 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
                       hintText: '输入你的坚果云用户名',
                     ),
                   ),
-            const SizedBox(height: 12),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _passwordController,
                     decoration: const InputDecoration(
@@ -3795,7 +3869,7 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
                     ),
                     obscureText: true,
                   ),
-            const SizedBox(height: 12),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _remoteFolderController,
                     decoration: const InputDecoration(
@@ -3835,18 +3909,3 @@ class _JianguoyunConfigPageState extends State<_JianguoyunConfigPage> {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

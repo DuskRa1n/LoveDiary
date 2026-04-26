@@ -30,9 +30,7 @@ class SyncExecutionResult {
 }
 
 class SyncSafetyPolicy {
-  const SyncSafetyPolicy({
-    this.maxDestructiveActions = 3,
-  });
+  const SyncSafetyPolicy({this.maxDestructiveActions = 3});
 
   final int maxDestructiveActions;
 }
@@ -52,16 +50,24 @@ class DiarySyncExecutor {
     required this.remoteSource,
     this.onProgress,
     this.safetyPolicy = const SyncSafetyPolicy(),
+    this.attachmentPolicy = const AttachmentSyncPolicy(),
   });
 
   final DiaryStorage storage;
   final DiarySyncRemoteSource remoteSource;
   final void Function(double progress, String label)? onProgress;
   final SyncSafetyPolicy safetyPolicy;
+  final AttachmentSyncPolicy attachmentPolicy;
 
   Future<SyncExecutionResult> sync() async {
+    onProgress?.call(0.04, '整理本地附件');
+    await storage.prepareFilesForSync();
     onProgress?.call(0.08, '读取本地和云端状态');
-    final planner = DiarySyncService(storage: storage, remoteSource: remoteSource);
+    final planner = DiarySyncService(
+      storage: storage,
+      remoteSource: remoteSource,
+      attachmentPolicy: attachmentPolicy,
+    );
     final plan = await planner.buildPlan();
     onProgress?.call(0.22, '生成同步计划');
 
@@ -176,7 +182,9 @@ class DiarySyncExecutor {
         continue;
       }
 
-      final targetAbsolutePath = await storage.resolveSyncFileAbsolutePath(relativePath);
+      final targetAbsolutePath = await storage.resolveSyncFileAbsolutePath(
+        relativePath,
+      );
       await _ensureParentDirectory(targetAbsolutePath);
       await remoteSource.downloadFile(
         relativePath: relativePath,
@@ -308,17 +316,23 @@ class DiarySyncExecutor {
   Future<void> _refreshSyncState({
     List<String> deletedRemotePaths = const [],
   }) async {
-    final refreshedLocalFiles = await storage.listSyncFiles();
+    final refreshedLocalFiles = (await storage.listSyncFiles())
+        .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
+        .toList();
     await remoteSource.persistSnapshot(refreshedLocalFiles);
     final refreshedRemoteSnapshot = await remoteSource.fetchSnapshot();
+    final refreshedRemoteFiles = refreshedRemoteSnapshot.files
+        .where((file) => attachmentPolicy.includeRemotePath(file.relativePath))
+        .toList();
     final refreshedState = SyncState(
       lastSyncedAt: DateTime.now(),
       lastKnownRemoteCursor: refreshedRemoteSnapshot.cursor,
       lastKnownLocalFingerprints: {
-        for (final file in refreshedLocalFiles) file.relativePath: file.fingerprint,
+        for (final file in refreshedLocalFiles)
+          file.relativePath: file.fingerprint,
       },
       lastKnownRemoteRevisions: {
-        for (final file in refreshedRemoteSnapshot.files)
+        for (final file in refreshedRemoteFiles)
           file.relativePath: file.revision,
       },
     );

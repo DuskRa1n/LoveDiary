@@ -9,6 +9,9 @@ class OneDriveSyncConfig {
     this.syncOnWrite = true,
     this.minimumSyncIntervalMinutes = 0,
     this.maxDestructiveActions = 3,
+    this.syncOriginals = false,
+    this.downloadOriginals = false,
+    this.localOriginalRetentionDays = 30,
     this.accountName,
     this.accountEmail,
   });
@@ -22,6 +25,9 @@ class OneDriveSyncConfig {
   final bool syncOnWrite;
   final int minimumSyncIntervalMinutes;
   final int maxDestructiveActions;
+  final bool syncOriginals;
+  final bool downloadOriginals;
+  final int localOriginalRetentionDays;
   final String? accountName;
   final String? accountEmail;
 
@@ -38,6 +44,9 @@ class OneDriveSyncConfig {
     bool? syncOnWrite,
     int? minimumSyncIntervalMinutes,
     int? maxDestructiveActions,
+    bool? syncOriginals,
+    bool? downloadOriginals,
+    int? localOriginalRetentionDays,
     String? accountName,
     String? accountEmail,
     bool clearAccountName = false,
@@ -55,9 +64,14 @@ class OneDriveSyncConfig {
           minimumSyncIntervalMinutes ?? this.minimumSyncIntervalMinutes,
       maxDestructiveActions:
           maxDestructiveActions ?? this.maxDestructiveActions,
+      syncOriginals: syncOriginals ?? this.syncOriginals,
+      downloadOriginals: downloadOriginals ?? this.downloadOriginals,
+      localOriginalRetentionDays:
+          localOriginalRetentionDays ?? this.localOriginalRetentionDays,
       accountName: clearAccountName ? null : accountName ?? this.accountName,
-      accountEmail:
-          clearAccountEmail ? null : accountEmail ?? this.accountEmail,
+      accountEmail: clearAccountEmail
+          ? null
+          : accountEmail ?? this.accountEmail,
     );
   }
 
@@ -72,6 +86,9 @@ class OneDriveSyncConfig {
       'sync_on_write': syncOnWrite,
       'minimum_sync_interval_minutes': minimumSyncIntervalMinutes,
       'max_destructive_actions': maxDestructiveActions,
+      'sync_originals': syncOriginals,
+      'download_originals': downloadOriginals,
+      'local_original_retention_days': localOriginalRetentionDays,
       'account_name': accountName,
       'account_email': accountEmail,
     };
@@ -99,6 +116,9 @@ class OneDriveSyncConfig {
       syncOnWrite: (json['sync_on_write'] as bool?) ?? true,
       minimumSyncIntervalMinutes: readInt('minimum_sync_interval_minutes', 0),
       maxDestructiveActions: readInt('max_destructive_actions', 3),
+      syncOriginals: (json['sync_originals'] as bool?) ?? false,
+      downloadOriginals: (json['download_originals'] as bool?) ?? false,
+      localOriginalRetentionDays: readInt('local_original_retention_days', 30),
       accountName: json['account_name'] as String?,
       accountEmail: json['account_email'] as String?,
     );

@@ -69,7 +69,7 @@ class RealTodayTab extends StatelessWidget {
                 clipBehavior: Clip.none,
                 scrollDirection: Axis.horizontal,
                 itemCount: recentEntries.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
                 itemBuilder: (context, index) {
                   final entry = recentEntries[index];
                   return _RecentMemoryCard(
@@ -84,7 +84,6 @@ class RealTodayTab extends StatelessWidget {
       ),
     );
   }
-
 }
 
 class _DaysSeal extends StatelessWidget {
@@ -109,17 +108,17 @@ class _DaysSeal extends StatelessWidget {
           Text(
             '$days',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: DiaryPalette.rose,
-                  fontWeight: FontWeight.w900,
-                  height: 0.95,
-                ),
+              color: DiaryPalette.rose,
+              fontWeight: FontWeight.w900,
+              height: 0.95,
+            ),
           ),
           Text(
             '天',
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: DiaryPalette.wine,
-                  fontWeight: FontWeight.w800,
-                ),
+              color: DiaryPalette.wine,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
@@ -164,34 +163,41 @@ class _RecentMemoryCard extends StatelessWidget {
               ],
               Text(
                 entry.title,
-                maxLines: hasImage ? 2 : 3,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: DiaryPalette.ink,
-                      fontWeight: FontWeight.w900,
-                      height: 1.14,
-                    ),
+                  color: DiaryPalette.ink,
+                  fontWeight: FontWeight.w900,
+                  height: 1.14,
+                ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                '${formatDiaryShortDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)} · ${entry.mood}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: DiaryPalette.wine,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 8),
               Expanded(
-                child: Text(
-                  entry.summary,
-                  maxLines: hasImage ? 3 : 7,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 6),
+                    Text(
+                      '${formatDiaryShortDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)} · ${entry.mood}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
                         color: DiaryPalette.wine,
-                        height: 1.45,
+                        fontWeight: FontWeight.w700,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Text(
+                        entry.summary,
+                        maxLines: hasImage ? 3 : 6,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 10),

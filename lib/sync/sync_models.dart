@@ -131,6 +131,34 @@ class RemoteSyncSnapshot {
   final List<RemoteSyncFile> files;
 }
 
+class AttachmentSyncPolicy {
+  const AttachmentSyncPolicy({
+    this.syncOriginals = false,
+    this.downloadOriginals = false,
+  });
+
+  final bool syncOriginals;
+  final bool downloadOriginals;
+
+  bool includeLocalPath(String relativePath) {
+    return !_isOriginalAttachmentPath(relativePath) || syncOriginals;
+  }
+
+  bool includeRemotePath(String relativePath) {
+    return !_isOriginalAttachmentPath(relativePath) || downloadOriginals;
+  }
+
+  bool includeTombstonePath(String relativePath) {
+    return !_isOriginalAttachmentPath(relativePath) || syncOriginals;
+  }
+
+  bool _isOriginalAttachmentPath(String relativePath) {
+    final normalized = relativePath.replaceAll('\\', '/');
+    return normalized.startsWith('attachments/') &&
+        normalized.contains('/originals/');
+  }
+}
+
 enum SyncActionType { upload, download, deleteRemote, deleteLocal, conflict }
 
 class SyncAction {

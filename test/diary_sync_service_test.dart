@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/data/diary_storage.dart';
@@ -33,60 +33,9 @@ class FakeRemoteSource implements DiarySyncRemoteSource {
     required String absolutePath,
     required bool isBinary,
   }) async {}
-  test('uses remote baseline to delete remote when snapshot is empty', () async {
-    final entry = DiaryEntry(
-      id: 'entry_delete_with_empty_snapshot',
-      title: 'Delete using remote baseline',
-      content: 'Remote listing can be empty while the last sync still knows this file exists.',
-      mood: 'happy',
-      createdAt: DateTime(2026, 4, 9, 8, 30),
-      comments: const [],
-      attachments: const [],
-    );
-    await storage.saveEntry(entry);
 
-    final localFile = (await storage.listSyncFiles()).singleWhere(
-      (file) =>
-          file.relativePath ==
-          'entries/entry_delete_with_empty_snapshot.json',
-    );
-
-    await storage.saveSyncState(
-      SyncState(
-        lastSyncedAt: DateTime(2026, 4, 9, 9, 30),
-        lastKnownRemoteCursor: 'cursor_1',
-        lastKnownLocalFingerprints: {
-          'entries/entry_delete_with_empty_snapshot.json': localFile.fingerprint,
-        },
-        lastKnownRemoteRevisions: const {
-          'entries/entry_delete_with_empty_snapshot.json':
-              'rev_delete_empty_1',
-        },
-      ),
-    );
-
-    await storage.deleteEntry(entry);
-
-    final service = DiarySyncService(
-      storage: storage,
-      remoteSource: FakeRemoteSource(
-        const RemoteSyncSnapshot(cursor: null, files: []),
-      ),
-    );
-
-    final plan = await service.buildPlan();
-
-    expect(plan.actions, hasLength(1));
-    expect(plan.actions.single.type, SyncActionType.deleteRemote);
-    expect(
-      plan.actions.single.relativePath,
-      'entries/entry_delete_with_empty_snapshot.json',
-    );
-    expect(
-      plan.actions.single.reason,
-      'local_deleted_using_remote_baseline',
-    );
-  });
+  @override
+  Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
 }
 
 void main() {
@@ -104,6 +53,61 @@ void main() {
     }
   });
 
+  test('uses remote baseline to delete remote when snapshot is empty', () async {
+    final entry = DiaryEntry(
+      id: 'entry_delete_with_empty_snapshot',
+      author: '他',
+      title: 'Delete using remote baseline',
+      content:
+          'Remote listing can be empty while the last sync still knows this file exists.',
+      mood: 'happy',
+      createdAt: DateTime(2026, 4, 9, 8, 30),
+      comments: const [],
+      attachments: const [],
+    );
+    await storage.saveEntry(entry);
+
+    final localFile = (await storage.listSyncFiles()).singleWhere(
+      (file) =>
+          file.relativePath == 'entries/entry_delete_with_empty_snapshot.json',
+    );
+
+    await storage.saveSyncState(
+      SyncState(
+        lastSyncedAt: DateTime(2026, 4, 9, 9, 30),
+        lastKnownRemoteCursor: 'cursor_1',
+        lastKnownLocalFingerprints: {
+          'entries/entry_delete_with_empty_snapshot.json':
+              localFile.fingerprint,
+        },
+        lastKnownRemoteRevisions: const {
+          'entries/entry_delete_with_empty_snapshot.json': 'rev_delete_empty_1',
+        },
+      ),
+    );
+
+    await storage.deleteEntry(entry);
+    await storage.permanentlyDeleteDeletedEntry(
+      (await storage.loadDustbinEntries()).single,
+    );
+
+    final service = DiarySyncService(
+      storage: storage,
+      remoteSource: FakeRemoteSource(
+        const RemoteSyncSnapshot(cursor: null, files: []),
+      ),
+    );
+
+    final plan = await service.buildPlan();
+
+    expect(plan.actions, hasLength(1));
+    expect(plan.actions.single.type, SyncActionType.deleteRemote);
+    expect(
+      plan.actions.single.relativePath,
+      'entries/entry_delete_with_empty_snapshot.json',
+    );
+    expect(plan.actions.single.reason, 'local_deleted_using_remote_baseline');
+  });
   test('远端为空时会把本地文件标记为上传', () async {
     await storage.saveProfile(
       CoupleProfile(
@@ -212,6 +216,7 @@ void main() {
   test('本地删除后会为远端生成删除动作', () async {
     final entry = DiaryEntry(
       id: 'entry_delete_sync',
+      author: '他',
       title: '删除同步',
       content: '这篇会被删除。',
       mood: '安心',
@@ -239,6 +244,9 @@ void main() {
     );
 
     await storage.deleteEntry(entry);
+    await storage.permanentlyDeleteDeletedEntry(
+      (await storage.loadDustbinEntries()).single,
+    );
 
     final service = DiarySyncService(
       storage: storage,
@@ -294,11 +302,12 @@ void main() {
     );
 
     final plan = await service.buildPlan();
-    final actionPaths = plan.actions.map((action) => action.relativePath).toList();
+    final actionPaths = plan.actions
+        .map((action) => action.relativePath)
+        .toList();
 
     expect(actionPaths, contains('profile.json'));
     expect(actionPaths.any((path) => path.startsWith('drafts/')), isFalse);
     expect(actionPaths.any((path) => path.startsWith('cache/')), isFalse);
   });
 }
-

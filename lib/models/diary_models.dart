@@ -32,24 +32,69 @@ class DiaryAttachment {
     required this.path,
     required this.originalName,
     required this.createdAt,
+    this.thumbnailPath,
+    this.previewPath,
+    this.originalPath,
+    this.hasLocalOriginal = false,
+    this.syncOriginal = false,
   });
 
   final String id;
   final String path;
   final String originalName;
   final DateTime createdAt;
+  final String? thumbnailPath;
+  final String? previewPath;
+  final String? originalPath;
+  final bool hasLocalOriginal;
+  final bool syncOriginal;
+
+  String get thumbnailOrFallbackPath =>
+      thumbnailPath ?? previewPath ?? pathOrOriginalFallback ?? '';
+
+  String get previewOrFallbackPath =>
+      previewPath ?? pathOrOriginalFallback ?? thumbnailPath ?? '';
+
+  String get originalOrFallbackPath =>
+      originalPath ?? pathOrOriginalFallback ?? previewPath ?? thumbnailPath ?? '';
+
+  String? get pathOrOriginalFallback {
+    if (path.isNotEmpty) {
+      return path;
+    }
+    return originalPath;
+  }
+
+  List<String> get storedPaths {
+    return <String?>[
+      path.isEmpty ? null : path,
+      thumbnailPath,
+      previewPath,
+      originalPath,
+    ].whereType<String>().where((item) => item.isNotEmpty).toSet().toList();
+  }
 
   DiaryAttachment copyWith({
     String? id,
     String? path,
     String? originalName,
     DateTime? createdAt,
+    String? thumbnailPath,
+    String? previewPath,
+    String? originalPath,
+    bool? hasLocalOriginal,
+    bool? syncOriginal,
   }) {
     return DiaryAttachment(
       id: id ?? this.id,
       path: path ?? this.path,
       originalName: originalName ?? this.originalName,
       createdAt: createdAt ?? this.createdAt,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+      previewPath: previewPath ?? this.previewPath,
+      originalPath: originalPath ?? this.originalPath,
+      hasLocalOriginal: hasLocalOriginal ?? this.hasLocalOriginal,
+      syncOriginal: syncOriginal ?? this.syncOriginal,
     );
   }
 
@@ -57,8 +102,13 @@ class DiaryAttachment {
     return {
       'id': id,
       'path': path,
+      'thumbnail_path': thumbnailPath,
+      'preview_path': previewPath,
+      'original_path': originalPath,
       'original_name': originalName,
       'created_at': createdAt.toIso8601String(),
+      'has_local_original': hasLocalOriginal,
+      'sync_original': syncOriginal,
     };
   }
 
@@ -66,10 +116,15 @@ class DiaryAttachment {
     return DiaryAttachment(
       id: json['id'] as String? ?? 'att_unknown',
       path: json['path'] as String? ?? '',
+      thumbnailPath: json['thumbnail_path'] as String?,
+      previewPath: json['preview_path'] as String?,
+      originalPath: json['original_path'] as String?,
       originalName: json['original_name'] as String? ?? 'attachment.jpg',
       createdAt: DateTime.parse(
         json['created_at'] as String? ?? DateTime.now().toIso8601String(),
       ),
+      hasLocalOriginal: json['has_local_original'] as bool? ?? false,
+      syncOriginal: json['sync_original'] as bool? ?? false,
     );
   }
 }

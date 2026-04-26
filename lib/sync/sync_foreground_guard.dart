@@ -8,20 +8,14 @@ class SyncForegroundGuard {
     'love_diary/sync_foreground',
   );
 
-  static Future<void> start({
-    required String label,
-    double? progress,
-  }) async {
+  static Future<void> start({required String label, double? progress}) async {
     if (!_isAndroid) {
       return;
     }
     await _invokeSafely('start', label: label, progress: progress);
   }
 
-  static Future<void> update({
-    required String label,
-    double? progress,
-  }) async {
+  static Future<void> update({required String label, double? progress}) async {
     if (!_isAndroid) {
       return;
     }
@@ -43,10 +37,14 @@ class SyncForegroundGuard {
     double? progress,
   }) async {
     try {
-      await _channel.invokeMethod<void>(method, <String, Object?>{
-        if (label != null) 'label': label,
-        if (progress != null) 'progress': progress.clamp(0, 1),
-      });
+      final arguments = <String, Object?>{};
+      if (label != null) {
+        arguments['label'] = label;
+      }
+      if (progress != null) {
+        arguments['progress'] = progress.clamp(0, 1);
+      }
+      await _channel.invokeMethod<void>(method, arguments);
     } on PlatformException catch (error) {
       debugPrint('Sync foreground guard failed: $error');
     } catch (error) {

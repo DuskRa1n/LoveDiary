@@ -34,10 +34,7 @@ class DiaryPage extends StatelessWidget {
     return Stack(
       children: [
         const Positioned.fill(child: _DiaryBackground()),
-        ListView(
-          padding: padding,
-          children: [child],
-        ),
+        ListView(padding: padding, children: [child]),
       ],
     );
   }
@@ -106,9 +103,7 @@ class DiaryHero extends StatelessWidget {
             bottom: -82,
             child: _SoftOrb(size: 180, color: Color(0xFFF4D6A9)),
           ),
-          Positioned.fill(
-            child: CustomPaint(painter: _HeroLinePainter()),
-          ),
+          Positioned.fill(child: CustomPaint(painter: _HeroLinePainter())),
           Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -159,10 +154,7 @@ class DiaryHero extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (footer != null) ...[
-                  const SizedBox(height: 22),
-                  footer!,
-                ],
+                if (footer != null) ...[const SizedBox(height: 22), footer!],
                 if (quote != null && quote!.trim().isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Container(
@@ -278,10 +270,7 @@ class DiarySectionHeader extends StatelessWidget {
             ],
           ),
         ),
-        if (action != null) ...[
-          const SizedBox(width: 12),
-          action!,
-        ],
+        if (action != null) ...[const SizedBox(width: 12), action!],
       ],
     );
   }
@@ -301,20 +290,20 @@ class DiaryBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (background, foreground, border) = switch (tone) {
       DiaryBadgeTone.rose => (
-          const Color(0xFFFFE8E4),
-          DiaryPalette.rose,
-          const Color(0xFFF1C2B9),
-        ),
+        const Color(0xFFFFE8E4),
+        DiaryPalette.rose,
+        const Color(0xFFF1C2B9),
+      ),
       DiaryBadgeTone.sand => (
-          const Color(0xFFFFF0DA),
-          DiaryPalette.tea,
-          const Color(0xFFE9C89D),
-        ),
+        const Color(0xFFFFF0DA),
+        DiaryPalette.tea,
+        const Color(0xFFE9C89D),
+      ),
       DiaryBadgeTone.ink => (
-          const Color(0xFFF3E8E2),
-          DiaryPalette.wine,
-          const Color(0xFFE2CBC0),
-        ),
+        const Color(0xFFF3E8E2),
+        DiaryPalette.wine,
+        const Color(0xFFE2CBC0),
+      ),
     };
 
     return Container(
@@ -425,7 +414,18 @@ class DiaryCover extends StatelessWidget {
       );
     }
 
-    final file = File(resolveStoredPath(rootDirectoryPath, attachment.path));
+    final path = attachment.thumbnailOrFallbackPath;
+    if (path.isEmpty) {
+      return _DiaryCoverPlaceholder(
+        count: attachments.length,
+        width: width,
+        height: height,
+        radius: radius,
+        iconSize: iconSize,
+      );
+    }
+
+    final file = File(resolveStoredPath(rootDirectoryPath, path));
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
@@ -444,7 +444,7 @@ class DiaryCover extends StatelessWidget {
           width: width,
           height: height,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _DiaryCoverPlaceholder(
+          errorBuilder: (_, _, _) => _DiaryCoverPlaceholder(
             count: attachments.length,
             width: width,
             height: height,
@@ -640,11 +640,7 @@ class _DiaryBackground extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFFFFEFE9),
-            Color(0xFFFFF7E8),
-            Color(0xFFFFE8E4),
-          ],
+          colors: [Color(0xFFFFEFE9), Color(0xFFFFF7E8), Color(0xFFFFE8E4)],
         ),
       ),
       child: Stack(
@@ -670,16 +666,8 @@ class _DiaryBackground extends StatelessWidget {
             top: 96,
             child: _FloatingHeart(size: 18, opacity: 0.42),
           ),
-          const Positioned(
-            right: 42,
-            top: 70,
-            child: _CloudPuff(),
-          ),
-          const Positioned(
-            left: -14,
-            bottom: 72,
-            child: _FlowerSilhouette(),
-          ),
+          const Positioned(right: 42, top: 70, child: _CloudPuff()),
+          const Positioned(left: -14, bottom: 72, child: _FlowerSilhouette()),
         ],
       ),
     );
@@ -715,11 +703,7 @@ class _CloudPuff extends StatelessWidget {
         height: 40,
         child: Stack(
           children: [
-            Positioned(
-              left: 8,
-              bottom: 4,
-              child: _CloudCircle(size: 34),
-            ),
+            Positioned(left: 8, bottom: 4, child: _CloudCircle(size: 34)),
             const Positioned(
               left: 28,
               bottom: 12,

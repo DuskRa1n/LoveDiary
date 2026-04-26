@@ -32,6 +32,7 @@ void main() {
     final entries = [
       DiaryEntry(
         id: 'entry_test_1',
+        author: '他',
         title: '一起逛超市',
         content: '买了很多零食，还讨论了周末要做什么。',
         mood: '开心',
@@ -123,6 +124,7 @@ void main() {
   test('会更新单篇日记并记录最后修改时间', () async {
     final entry = DiaryEntry(
       id: 'entry_update_1',
+      author: '他',
       title: '第一次版本',
       content: '先记下今天的晚饭。',
       mood: '开心',
@@ -148,6 +150,7 @@ void main() {
   test('删除日记后会同步清理文件和 tombstone', () async {
     final entry = DiaryEntry(
       id: 'entry_delete_1',
+      author: '他',
       title: '要删除的日记',
       content: '这篇会被移除。',
       mood: '想念',
@@ -223,6 +226,7 @@ void main() {
 
     final entry = DiaryEntry(
       id: 'entry_with_attachment',
+      author: '他',
       title: '带附件的日记',
       content: '测试附件分目录保存。',
       mood: '开心',
@@ -233,7 +237,10 @@ void main() {
 
     final savedEntry = await storage.saveEntry(entry);
 
-    expect(savedEntry.attachments.single.path, startsWith('attachments/entry_with_attachment/'));
+    expect(
+      savedEntry.attachments.single.path,
+      startsWith('attachments/entry_with_attachment/'),
+    );
     expect(
       File(
         '${tempDirectory.path}${Platform.pathSeparator}${savedEntry.attachments.single.path.replaceAll('/', Platform.pathSeparator)}',
@@ -242,52 +249,56 @@ void main() {
     );
   });
 
-  test('clearing draft after save keeps the finalized attachment file', () async {
-    final sourceFile = File(
-      '${tempDirectory.path}${Platform.pathSeparator}draft_source.jpg',
-    );
-    await sourceFile.writeAsBytes(List<int>.filled(16, 3));
+  test(
+    'clearing draft after save keeps the finalized attachment file',
+    () async {
+      final sourceFile = File(
+        '${tempDirectory.path}${Platform.pathSeparator}draft_source.jpg',
+      );
+      await sourceFile.writeAsBytes(List<int>.filled(16, 3));
 
-    final importedAttachment = await storage.importAttachment(
-      sourcePath: sourceFile.path,
-      fileName: 'scaled_36.png',
-    );
-    await storage.saveEntryDraft(
-      DiaryDraft(
-        title: 'draft title',
-        content: 'draft content',
-        mood: '开心',
-        selectedDate: DateTime(2026, 4, 9),
-        attachments: [importedAttachment],
-        savedAt: DateTime(2026, 4, 9, 12, 0),
-      ),
-    );
+      final importedAttachment = await storage.importAttachment(
+        sourcePath: sourceFile.path,
+        fileName: 'scaled_36.png',
+      );
+      await storage.saveEntryDraft(
+        DiaryDraft(
+          title: 'draft title',
+          content: 'draft content',
+          mood: '开心',
+          selectedDate: DateTime(2026, 4, 9),
+          attachments: [importedAttachment],
+          savedAt: DateTime(2026, 4, 9, 12, 0),
+        ),
+      );
 
-    final savedEntry = await storage.saveEntry(
-      DiaryEntry(
-        id: 'entry_from_draft',
-        title: 'draft title',
-        content: 'draft content',
-        mood: '开心',
-        createdAt: DateTime(2026, 4, 9, 12, 0),
-        comments: const [],
-        attachments: [importedAttachment],
-      ),
-    );
+      final savedEntry = await storage.saveEntry(
+        DiaryEntry(
+          id: 'entry_from_draft',
+          author: '他',
+          title: 'draft title',
+          content: 'draft content',
+          mood: '开心',
+          createdAt: DateTime(2026, 4, 9, 12, 0),
+          comments: const [],
+          attachments: [importedAttachment],
+        ),
+      );
 
-    await storage.clearEntryDraft();
+      await storage.clearEntryDraft();
 
-    final attachmentPath = savedEntry.attachments.single.path.replaceAll(
-      '/',
-      Platform.pathSeparator,
-    );
-    final finalizedAttachment = File(
-      '${tempDirectory.path}${Platform.pathSeparator}$attachmentPath',
-    );
+      final attachmentPath = savedEntry.attachments.single.path.replaceAll(
+        '/',
+        Platform.pathSeparator,
+      );
+      final finalizedAttachment = File(
+        '${tempDirectory.path}${Platform.pathSeparator}$attachmentPath',
+      );
 
-    expect(finalizedAttachment.existsSync(), isTrue);
-    expect(await storage.loadEntryDraft(), isNull);
-  });
+      expect(finalizedAttachment.existsSync(), isTrue);
+      expect(await storage.loadEntryDraft(), isNull);
+    },
+  );
 
   test('会列出可用于网盘同步的文件清单', () async {
     await storage.saveProfile(
@@ -312,83 +323,91 @@ void main() {
     expect(relativePaths, isNot(contains('sync/state.json')));
     expect(relativePaths, isNot(contains('sync/tombstones.json')));
   });
-  test('purges expired dustbin entries after 7 days and creates tombstones', () async {
-    final initialStorage = DiaryStorage(
-      rootDirectoryPath: tempDirectory.path,
-      nowProvider: () => DateTime(2026, 4, 9, 10, 0),
-    );
-    final entry = DiaryEntry(
-      id: 'entry_dustbin_expired',
-      title: 'Dustbin expiry',
-      content: 'Should stay in dustbin for seven days before true deletion.',
-      mood: 'happy',
-      createdAt: DateTime(2026, 4, 9, 9, 0),
-      comments: const [],
-      attachments: const [],
-    );
-    await initialStorage.saveEntry(entry);
-    await initialStorage.deleteEntry(entry);
-
-    final expiredStorage = DiaryStorage(
-      rootDirectoryPath: tempDirectory.path,
-      nowProvider: () => DateTime(2026, 4, 17, 10, 1),
-    );
-    await expiredStorage.purgeExpiredDustbinEntries();
-
-    final tombstones = await expiredStorage.loadTombstones();
-    final dustbinFile = File(
-      '${tempDirectory.path}${Platform.pathSeparator}dustbin${Platform.pathSeparator}entries${Platform.pathSeparator}entry_dustbin_expired.json',
-    );
-
-    expect(dustbinFile.existsSync(), isFalse);
-    expect(
-      tombstones.any(
-        (item) => item.relativePath == 'entries/entry_dustbin_expired.json',
-      ),
-      isTrue,
-    );
-  });
-  test('saving after a draft does not delete the final attachment file', () async {
-    final sourceFile = File(
-      '${tempDirectory.path}${Platform.pathSeparator}source_keep.jpg',
-    );
-    await sourceFile.writeAsBytes(List<int>.filled(12, 5));
-
-    final importedAttachment = await storage.importAttachment(
-      sourcePath: sourceFile.path,
-      fileName: 'keep.jpg',
-    );
-
-    await storage.saveEntryDraft(
-      DiaryDraft(
-        title: 'Draft with image',
-        content: 'Temporary image should survive publish.',
-        mood: '开心',
-        selectedDate: DateTime(2026, 4, 9),
-        attachments: [importedAttachment],
-        savedAt: DateTime(2026, 4, 9, 12, 30),
-      ),
-    );
-
-    final savedEntry = await storage.saveEntry(
-      DiaryEntry(
-        id: 'entry_keep_attachment',
-        title: 'Keep attachment',
-        content: 'Final entry with image.',
-        mood: '开心',
-        createdAt: DateTime(2026, 4, 9, 12, 31),
+  test(
+    'purges expired dustbin entries after 7 days and creates tombstones',
+    () async {
+      final initialStorage = DiaryStorage(
+        rootDirectoryPath: tempDirectory.path,
+        nowProvider: () => DateTime(2026, 4, 9, 10, 0),
+      );
+      final entry = DiaryEntry(
+        id: 'entry_dustbin_expired',
+        author: '他',
+        title: 'Dustbin expiry',
+        content: 'Should stay in dustbin for seven days before true deletion.',
+        mood: 'happy',
+        createdAt: DateTime(2026, 4, 9, 9, 0),
         comments: const [],
-        attachments: [importedAttachment],
-      ),
-    );
-    await storage.clearEntryDraft();
+        attachments: const [],
+      );
+      await initialStorage.saveEntry(entry);
+      await initialStorage.deleteEntry(entry);
 
-    final savedAttachmentFile = File(
-      '${tempDirectory.path}${Platform.pathSeparator}${savedEntry.attachments.single.path.replaceAll('/', Platform.pathSeparator)}',
-    );
+      final expiredStorage = DiaryStorage(
+        rootDirectoryPath: tempDirectory.path,
+        nowProvider: () => DateTime(2026, 4, 17, 10, 1),
+      );
+      await expiredStorage.purgeExpiredDustbinEntries();
 
-    expect(savedAttachmentFile.existsSync(), isTrue);
-  });
+      final tombstones = await expiredStorage.loadTombstones();
+      final dustbinFile = File(
+        '${tempDirectory.path}${Platform.pathSeparator}dustbin${Platform.pathSeparator}entries${Platform.pathSeparator}entry_dustbin_expired.json',
+      );
+
+      expect(dustbinFile.existsSync(), isFalse);
+      expect(
+        tombstones.any(
+          (item) => item.relativePath == 'entries/entry_dustbin_expired.json',
+        ),
+        isTrue,
+      );
+    },
+  );
+  test(
+    'saving after a draft does not delete the final attachment file',
+    () async {
+      final sourceFile = File(
+        '${tempDirectory.path}${Platform.pathSeparator}source_keep.jpg',
+      );
+      await sourceFile.writeAsBytes(List<int>.filled(12, 5));
+
+      final importedAttachment = await storage.importAttachment(
+        sourcePath: sourceFile.path,
+        fileName: 'keep.jpg',
+      );
+
+      await storage.saveEntryDraft(
+        DiaryDraft(
+          title: 'Draft with image',
+          content: 'Temporary image should survive publish.',
+          mood: '开心',
+          selectedDate: DateTime(2026, 4, 9),
+          attachments: [importedAttachment],
+          savedAt: DateTime(2026, 4, 9, 12, 30),
+        ),
+      );
+
+      final savedEntry = await storage.saveEntry(
+        DiaryEntry(
+          id: 'entry_keep_attachment',
+          author: '他',
+          title: 'Keep attachment',
+          content: 'Final entry with image.',
+          mood: '开心',
+          createdAt: DateTime(2026, 4, 9, 12, 31),
+          comments: const [],
+          attachments: [importedAttachment],
+        ),
+      );
+      await storage.clearEntryDraft();
+
+      final savedAttachmentFile = File(
+        '${tempDirectory.path}${Platform.pathSeparator}${savedEntry.attachments.single.path.replaceAll('/', Platform.pathSeparator)}',
+      );
+
+      expect(savedAttachmentFile.existsSync(), isTrue);
+    },
+  );
 
   test('restoring a dustbin entry moves it back to active entries', () async {
     final sourceFile = File(
@@ -403,6 +422,7 @@ void main() {
     final savedEntry = await storage.saveEntry(
       DiaryEntry(
         id: 'entry_restore',
+        author: '他',
         title: 'Restore me',
         content: 'This entry should be restorable.',
         mood: '开心',
@@ -431,6 +451,7 @@ void main() {
     final savedEntry = await storage.saveEntry(
       DiaryEntry(
         id: 'entry_purge_now',
+        author: '他',
         title: 'Delete forever',
         content: 'This entry should be purged immediately.',
         mood: '开心',
@@ -448,7 +469,9 @@ void main() {
 
     expect(await storage.loadDustbinEntries(), isEmpty);
     expect(
-      tombstones.any((item) => item.relativePath == 'entries/entry_purge_now.json'),
+      tombstones.any(
+        (item) => item.relativePath == 'entries/entry_purge_now.json',
+      ),
       isTrue,
     );
   });

@@ -95,9 +95,9 @@ class RealUsTab extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       oneDriveSyncLabel ?? '正在把今天的记忆放回云端...',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: DiaryPalette.wine,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
                     ),
                   ),
                 ],
@@ -205,8 +205,7 @@ class RealUsTab extends StatelessWidget {
                         const SizedBox(height: 10),
                         _InlineSyncActions(
                           isBusy: isEditingJianguoyun || isSyncingJianguoyun,
-                          primaryLabel:
-                              isSyncingJianguoyun ? '同步中...' : '立即同步',
+                          primaryLabel: isSyncingJianguoyun ? '同步中...' : '立即同步',
                           secondaryLabel: '断开连接',
                           onPrimary: onSyncJianguoyun,
                           onSecondary: onDisconnectJianguoyun,
@@ -258,7 +257,7 @@ class RealUsTab extends StatelessWidget {
               SizedBox(height: 14),
               Text('作者：Eric Chen'),
               SizedBox(height: 8),
-              Text('版本：0.6.11+27'),
+              Text('版本：0.7.3+32'),
               SizedBox(height: 14),
               Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
               SizedBox(height: 8),
@@ -280,10 +279,7 @@ class RealUsTab extends StatelessWidget {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({
-    required this.profile,
-    required this.togetherDays,
-  });
+  const _ProfileHeader({required this.profile, required this.togetherDays});
 
   final CoupleProfile profile;
   final int togetherDays;
@@ -309,10 +305,7 @@ class _ProfileHeader extends StatelessWidget {
         runSpacing: 10,
         children: [
           DiaryBadge(label: '已连接 ${profile.partnerName}'),
-          DiaryBadge(
-            label: '在一起 $togetherDays 天',
-            tone: DiaryBadgeTone.sand,
-          ),
+          DiaryBadge(label: '在一起 $togetherDays 天', tone: DiaryBadgeTone.sand),
           DiaryBadge(
             label: '纪念日 ${formatDiaryShortDate(profile.togetherSince)}',
             tone: DiaryBadgeTone.ink,
@@ -331,7 +324,7 @@ class _AvatarBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initial = label.isEmpty ? '?' : label.substring(0, 1);
+    final initial = label.trim().isEmpty ? '?' : label.trim().characters.first;
     return Container(
       width: 54,
       height: 54,
@@ -351,9 +344,9 @@ class _AvatarBubble extends StatelessWidget {
       child: Text(
         initial,
         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: accent ? DiaryPalette.rose : DiaryPalette.tea,
-              fontWeight: FontWeight.w900,
-            ),
+          color: accent ? DiaryPalette.rose : DiaryPalette.tea,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
@@ -400,9 +393,9 @@ class _SettingsTile extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
-                        ),
+                      color: DiaryPalette.ink,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   const SizedBox(height: 3),
                   Text(
@@ -410,9 +403,9 @@ class _SettingsTile extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                          height: 1.35,
-                        ),
+                      color: DiaryPalette.wine,
+                      height: 1.35,
+                    ),
                   ),
                 ],
               ),
