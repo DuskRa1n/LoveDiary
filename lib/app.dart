@@ -160,6 +160,8 @@ class LoveDailyShell extends StatefulWidget {
 }
 
 class _LoveDailyShellState extends State<LoveDailyShell> {
+  static const Duration _syncExecutionTimeout = Duration(minutes: 12);
+
   late final String _startupQuote = randomDailyQuote();
   List<DiaryEntry> _entries = const [];
   CoupleProfile _profile = DiaryStorage.seedProfile();
@@ -726,12 +728,12 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       }
     });
 
-    await SyncForegroundGuard.start(
-      label: _friendlySyncMessage(0),
-      progress: 0,
-    );
-
     try {
+      await SyncForegroundGuard.start(
+        label: _friendlySyncMessage(0),
+        progress: 0,
+      );
+
       final remoteSource = _oneDriveRemoteSource();
       final executor = DiarySyncExecutor(
         storage: widget.storage,
@@ -760,7 +762,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           });
         },
       );
-      final result = await executor.sync();
+      final result = await executor.sync().timeout(_syncExecutionTimeout);
       await _loadAppData();
 
       if (!mounted) {
@@ -799,6 +801,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     } on OneDriveAuthException catch (error) {
       if (mounted) {
         _showMessage(error.message);
+      }
+    } on TimeoutException {
+      if (mounted) {
+        _showMessage('OneDrive 同步超时，请检查网络后重试。');
       }
     } catch (error) {
       if (mounted) {
@@ -933,7 +939,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         storage: widget.storage,
         remoteSource: remoteSource,
       );
-      final result = await executor.sync();
+      final result = await executor.sync().timeout(_syncExecutionTimeout);
       await _loadAppData();
 
       if (!mounted) {
@@ -960,6 +966,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     } on WebDavSyncException catch (error) {
       if (mounted) {
         _showMessage(error.message);
+      }
+    } on TimeoutException {
+      if (mounted) {
+        _showMessage('坚果云同步超时，请检查网络后重试。');
       }
     } catch (error) {
       if (mounted) {

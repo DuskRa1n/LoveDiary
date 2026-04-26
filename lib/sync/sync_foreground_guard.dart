@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ class SyncForegroundGuard {
   static const MethodChannel _channel = MethodChannel(
     'love_diary/sync_foreground',
   );
+  static const Duration _channelTimeout = Duration(seconds: 3);
 
   static Future<void> start({required String label, double? progress}) async {
     if (!_isAndroid) {
@@ -44,7 +46,11 @@ class SyncForegroundGuard {
       if (progress != null) {
         arguments['progress'] = progress.clamp(0, 1);
       }
-      await _channel.invokeMethod<void>(method, arguments);
+      await _channel
+          .invokeMethod<void>(method, arguments)
+          .timeout(_channelTimeout);
+    } on TimeoutException catch (error) {
+      debugPrint('Sync foreground guard timed out: $error');
     } on PlatformException catch (error) {
       debugPrint('Sync foreground guard failed: $error');
     } catch (error) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -22,6 +23,7 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
   WebDavRemoteSource({required this.storage});
 
   static const String _remoteIndexFileName = '.love_diary_sync_index.json';
+  static const Duration _requestTimeout = Duration(seconds: 45);
 
   final DiaryStorage storage;
   final HttpClient _client = HttpClient()
@@ -47,10 +49,7 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
         return const RemoteSyncSnapshot(cursor: null, files: []);
       }
       _ensureSuccess(rootResponse, allowedStatusCodes: {207});
-      files = _parseSnapshotFiles(
-        config: config,
-        xmlBody: rootResponse.body,
-      );
+      files = _parseSnapshotFiles(config: config, xmlBody: rootResponse.body);
     } on WebDavSyncException catch (error) {
       if (!_shouldFallbackToRecursiveScan(error)) {
         rethrow;
@@ -98,9 +97,7 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
       headers: {
         HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
       },
-      body: utf8.encode(
-        const JsonEncoder.withIndent('  ').convert(payload),
-      ),
+      body: utf8.encode(const JsonEncoder.withIndent('  ').convert(payload)),
     );
     _ensureSuccess(response, allowedStatusCodes: {200, 201, 204});
   }
@@ -261,8 +258,7 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
         size: map['size'] as int,
         isBinary: map['is_binary'] as bool,
       );
-    }).toList()
-      ..sort((a, b) => a.relativePath.compareTo(b.relativePath));
+    }).toList()..sort((a, b) => a.relativePath.compareTo(b.relativePath));
 
     return RemoteSyncSnapshot(cursor: null, files: files);
   }
@@ -278,10 +274,13 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
     );
 
     for (final item in responses) {
-      final href = item.children.whereType<XmlElement>().firstWhere(
-        (element) => element.name.local == 'href',
-        orElse: () => XmlElement(XmlName('empty')),
-      ).innerText;
+      final href = item.children
+          .whereType<XmlElement>()
+          .firstWhere(
+            (element) => element.name.local == 'href',
+            orElse: () => XmlElement(XmlName('empty')),
+          )
+          .innerText;
       if (href.isEmpty) {
         continue;
       }
@@ -417,10 +416,9 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
       return null;
     }
 
-    final trimmed = relative.substring(folderPrefix.length).replaceAll(
-      RegExp(r'^/+'),
-      '',
-    );
+    final trimmed = relative
+        .substring(folderPrefix.length)
+        .replaceAll(RegExp(r'^/+'), '');
     return trimmed.isEmpty ? null : trimmed;
   }
 
@@ -456,7 +454,9 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
     const maxAttempts = 3;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final request = await _client.openUrl(method, uri);
+        final request = await _client
+            .openUrl(method, uri)
+            .timeout(_requestTimeout);
         request.headers.set(
           HttpHeaders.authorizationHeader,
           'Basic ${base64Encode(utf8.encode('${config.username}:${config.password}'))}',
@@ -466,8 +466,10 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
         if (body != null && body.isNotEmpty) {
           request.add(body);
         }
-        final response = await request.close();
-        final bytes = await _readResponseBytes(response);
+        final response = await request.close().timeout(_requestTimeout);
+        final bytes = await _readResponseBytes(
+          response,
+        ).timeout(_requestTimeout);
         return _WebDavResponse(
           method: method,
           uri: uri,
@@ -485,6 +487,12 @@ class WebDavRemoteSource implements DiarySyncRemoteSource {
         if (attempt == maxAttempts) {
           throw WebDavSyncException(
             'WebDAV $method ${uri.toString()} failed: $error',
+          );
+        }
+      } on TimeoutException catch (error) {
+        if (attempt == maxAttempts) {
+          throw WebDavSyncException(
+            'WebDAV $method ${uri.toString()} timed out: $error',
           );
         }
       }
@@ -555,10 +563,7 @@ class _WebDavResponse {
 }
 
 class _ParsedRemoteItem {
-  const _ParsedRemoteItem({
-    required this.isDirectory,
-    required this.file,
-  });
+  const _ParsedRemoteItem({required this.isDirectory, required this.file});
 
   final bool isDirectory;
   final RemoteSyncFile file;

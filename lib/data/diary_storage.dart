@@ -75,6 +75,7 @@ class DiaryStorage {
   static const _webDavConfigFileName = 'webdav_account.json';
   static const _oneDriveConfigFileName = 'onedrive_account.json';
   static const _dustbinRetention = Duration(days: 7);
+  static const _imageTransformTimeout = Duration(seconds: 20);
 
   Future<List<DiaryEntry>> loadEntries() async {
     await purgeExpiredDustbinEntries();
@@ -1650,15 +1651,16 @@ class DiaryStorage {
   }) async {
     try {
       await targetFile.parent.create(recursive: true);
-      final bytes = await sourceFile.readAsBytes();
-      final codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: maxDimension,
+      final bytes = await sourceFile.readAsBytes().timeout(
+        _imageTransformTimeout,
       );
-      final frame = await codec.getNextFrame();
-      final byteData = await frame.image.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
+      final codec = await ui
+          .instantiateImageCodec(bytes, targetWidth: maxDimension)
+          .timeout(_imageTransformTimeout);
+      final frame = await codec.getNextFrame().timeout(_imageTransformTimeout);
+      final byteData = await frame.image
+          .toByteData(format: ui.ImageByteFormat.png)
+          .timeout(_imageTransformTimeout);
       if (byteData == null) {
         await sourceFile.copy(targetFile.path);
         return;
