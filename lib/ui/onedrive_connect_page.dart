@@ -69,7 +69,6 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       setState(() {
         _session = session;
       });
-      await _openVerificationPage(session, silentFailure: true);
     } on OneDriveAuthException catch (error) {
       if (mounted) {
         setState(() {
@@ -96,9 +95,9 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label 已复制')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label 已复制')));
   }
 
   Future<void> _openVerificationPage(
@@ -192,9 +191,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
     final session = _session;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('连接 OneDrive'),
-      ),
+      appBar: AppBar(title: const Text('连接 OneDrive')),
       body: DiaryPage(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,7 +199,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
             const DiaryHero(
               eyebrow: 'OneDrive',
               title: '连接云端同步',
-              subtitle: '当前先使用设备码授权。完成登录后，日记会同步到 OneDrive 的应用专属目录。',
+              subtitle: '当前先使用设备码授权。这里不会自动跳转浏览器，拿到验证码后你可以手动打开登录页面。',
             ),
             const SizedBox(height: 22),
             DiaryPanel(
@@ -212,9 +209,9 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                   Text(
                     '同步目录',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w800,
-                        ),
+                      color: DiaryPalette.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -227,15 +224,15 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                   const SizedBox(height: 10),
                   Text(
                     '两台设备需要使用同一个目录名。建议先不要频繁切换目录。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
                   ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: _isLoading || _isCompleting ? null : _startFlow,
                     icon: const Icon(Icons.login_rounded),
-                    label: Text(_isLoading ? '正在获取验证码...' : '开始授权'),
+                    label: Text(_isLoading ? '正在获取验证码...' : '获取验证码'),
                   ),
                 ],
               ),
@@ -286,9 +283,9 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                 child: Text(
                   _error!,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: DiaryPalette.rose,
-                        height: 1.45,
-                      ),
+                    color: DiaryPalette.rose,
+                    height: 1.45,
+                  ),
                 ),
               ),
             ],
@@ -304,8 +301,9 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                     label: const Text('重新获取验证码'),
                   ),
                 TextButton(
-                  onPressed:
-                      _isCompleting ? null : () => Navigator.of(context).pop(),
+                  onPressed: _isCompleting
+                      ? null
+                      : () => Navigator.of(context).pop(),
                   child: const Text('取消'),
                 ),
               ],
@@ -348,9 +346,9 @@ class _ConnectStep extends StatelessWidget {
           child: Text(
             index,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: DiaryPalette.rose,
-                  fontWeight: FontWeight.w800,
-                ),
+              color: DiaryPalette.rose,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
         const SizedBox(width: 14),
@@ -361,23 +359,20 @@ class _ConnectStep extends StatelessWidget {
               Text(
                 title,
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: DiaryPalette.ink,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  color: DiaryPalette.ink,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const SizedBox(height: 6),
               SelectableText(
                 body,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.5,
-                    ),
+                  color: DiaryPalette.wine,
+                  height: 1.5,
+                ),
               ),
               const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: onAction,
-                child: Text(actionLabel),
-              ),
+              OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
             ],
           ),
         ),

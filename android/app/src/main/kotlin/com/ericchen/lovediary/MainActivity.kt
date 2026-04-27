@@ -1,4 +1,4 @@
-package com.example.love_diary
+package com.ericchen.lovediary
 
 import android.Manifest
 import android.content.Intent

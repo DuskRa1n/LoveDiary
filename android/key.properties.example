@@ -1,0 +1,4 @@
+storeFile=../../keystore/lovediary-release.jks
+storePassword=replace_me
+keyAlias=release
+keyPassword=replace_me

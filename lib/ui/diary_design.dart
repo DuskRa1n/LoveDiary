@@ -23,19 +23,70 @@ class DiaryPage extends StatelessWidget {
   const DiaryPage({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.fromLTRB(18, 22, 18, 112),
+    this.padding = const EdgeInsets.fromLTRB(18, 14, 18, 112),
+    this.showBackground = true,
+    this.respectTopSafeArea = false,
   });
 
   final Widget child;
   final EdgeInsets padding;
+  final bool showBackground;
+  final bool respectTopSafeArea;
 
   @override
   Widget build(BuildContext context) {
+    final effectivePadding = respectTopSafeArea
+        ? padding.copyWith(top: padding.top + MediaQuery.paddingOf(context).top)
+        : padding;
     return Stack(
       children: [
-        const Positioned.fill(child: _DiaryBackground()),
-        ListView(padding: padding, children: [child]),
+        if (showBackground) const Positioned.fill(child: DiaryBackground()),
+        ListView(padding: effectivePadding, children: [child]),
       ],
+    );
+  }
+}
+
+class DiaryBackground extends StatelessWidget {
+  const DiaryBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFFEFE9), Color(0xFFFFF7E8), Color(0xFFFFE8E4)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          const Positioned.fill(child: CustomPaint(painter: _PaperPainter())),
+          const Positioned(
+            left: -72,
+            top: -40,
+            child: _SoftOrb(size: 190, color: Color(0xFFFFC8C0)),
+          ),
+          const Positioned(
+            right: -64,
+            top: 132,
+            child: _SoftOrb(size: 148, color: Color(0xFFFFE0B9)),
+          ),
+          const Positioned(
+            right: 26,
+            bottom: 76,
+            child: _SoftOrb(size: 102, color: Color(0xFFFFD9D8)),
+          ),
+          const Positioned(
+            left: 28,
+            top: 96,
+            child: _FloatingHeart(size: 18, opacity: 0.42),
+          ),
+          const Positioned(right: 42, top: 70, child: _CloudPuff()),
+          const Positioned(left: -14, bottom: 72, child: _FlowerSilhouette()),
+        ],
+      ),
     );
   }
 }
@@ -625,50 +676,6 @@ class DiaryActionRow extends StatelessWidget {
             const Icon(Icons.chevron_right_rounded, color: DiaryPalette.wine),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _DiaryBackground extends StatelessWidget {
-  const _DiaryBackground();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFFFEFE9), Color(0xFFFFF7E8), Color(0xFFFFE8E4)],
-        ),
-      ),
-      child: Stack(
-        children: [
-          const Positioned.fill(child: CustomPaint(painter: _PaperPainter())),
-          const Positioned(
-            left: -72,
-            top: -40,
-            child: _SoftOrb(size: 190, color: Color(0xFFFFC8C0)),
-          ),
-          const Positioned(
-            right: -64,
-            top: 132,
-            child: _SoftOrb(size: 148, color: Color(0xFFFFE0B9)),
-          ),
-          const Positioned(
-            right: 26,
-            bottom: 76,
-            child: _SoftOrb(size: 102, color: Color(0xFFFFD9D8)),
-          ),
-          const Positioned(
-            left: 28,
-            top: 96,
-            child: _FloatingHeart(size: 18, opacity: 0.42),
-          ),
-          const Positioned(right: 42, top: 70, child: _CloudPuff()),
-          const Positioned(left: -14, bottom: 72, child: _FlowerSilhouette()),
-        ],
       ),
     );
   }

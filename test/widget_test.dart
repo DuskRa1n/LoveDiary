@@ -7,7 +7,6 @@ import 'package:love_diary/data/diary_storage.dart';
 import 'package:love_diary/models/diary_models.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
-import 'package:love_diary/sync/webdav/webdav_models.dart';
 import 'package:love_diary/ui/real_timeline_tab.dart';
 
 class FakeDiaryStorage extends DiaryStorage {
@@ -61,17 +60,14 @@ class FakeDiaryStorage extends DiaryStorage {
   }
 
   @override
-  Future<SyncState> loadSyncState() async {
+  Future<SyncState> loadSyncState([
+    SyncProvider provider = SyncProvider.oneDrive,
+  ]) async {
     return SyncState.initial();
   }
 
   @override
   Future<OneDriveSyncConfig?> loadOneDriveSyncConfig() async {
-    return null;
-  }
-
-  @override
-  Future<WebDavSyncConfig?> loadWebDavSyncConfig() async {
     return null;
   }
 

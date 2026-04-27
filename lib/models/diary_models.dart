@@ -56,7 +56,11 @@ class DiaryAttachment {
       previewPath ?? pathOrOriginalFallback ?? thumbnailPath ?? '';
 
   String get originalOrFallbackPath =>
-      originalPath ?? pathOrOriginalFallback ?? previewPath ?? thumbnailPath ?? '';
+      originalPath ??
+      pathOrOriginalFallback ??
+      previewPath ??
+      thumbnailPath ??
+      '';
 
   String? get pathOrOriginalFallback {
     if (path.isNotEmpty) {
@@ -179,9 +183,7 @@ class CoupleProfile {
   factory CoupleProfile.fromJson(Map<String, dynamic> json) {
     return CoupleProfile(
       maleName:
-          json['male_name'] as String? ??
-          json['my_name'] as String? ??
-          '他',
+          json['male_name'] as String? ?? json['my_name'] as String? ?? '他',
       femaleName:
           json['female_name'] as String? ??
           json['partner_name'] as String? ??
@@ -266,7 +268,9 @@ class DiaryEntry {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
       'comments': comments.map((comment) => comment.toJson()).toList(),
-      'attachments': attachments.map((attachment) => attachment.toJson()).toList(),
+      'attachments': attachments
+          .map((attachment) => attachment.toJson())
+          .toList(),
     };
   }
 
@@ -300,19 +304,13 @@ class DiaryEntry {
 }
 
 class DeletedDiaryEntry {
-  const DeletedDiaryEntry({
-    required this.entry,
-    required this.deletedAt,
-  });
+  const DeletedDiaryEntry({required this.entry, required this.deletedAt});
 
   final DiaryEntry entry;
   final DateTime deletedAt;
 
   Map<String, dynamic> toJson() {
-    return {
-      'entry': entry.toJson(),
-      'deleted_at': deletedAt.toIso8601String(),
-    };
+    return {'entry': entry.toJson(), 'deleted_at': deletedAt.toIso8601String()};
   }
 
   factory DeletedDiaryEntry.fromJson(Map<String, dynamic> json) {
@@ -346,7 +344,9 @@ class DiaryDraft {
       'content': content,
       'mood': mood,
       'selected_date': selectedDate.toIso8601String(),
-      'attachments': attachments.map((attachment) => attachment.toJson()).toList(),
+      'attachments': attachments
+          .map((attachment) => attachment.toJson())
+          .toList(),
       'saved_at': savedAt.toIso8601String(),
     };
   }

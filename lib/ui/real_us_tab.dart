@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../models/diary_models.dart';
 import '../sync/onedrive/onedrive_models.dart';
-import '../sync/webdav/webdav_models.dart';
 import 'diary_design.dart';
 
 class RealUsTab extends StatelessWidget {
@@ -11,39 +10,25 @@ class RealUsTab extends StatelessWidget {
     required this.profile,
     required this.entries,
     required this.oneDriveConfig,
-    required this.jianguoyunConfig,
     required this.lastSyncedAt,
-    required this.isSyncingOneDrive,
-    required this.oneDriveSyncProgress,
-    required this.oneDriveSyncLabel,
-    required this.isEditingJianguoyun,
-    required this.isSyncingJianguoyun,
+    required this.lastSyncFailedAt,
+    required this.lastSyncFailureMessage,
     required this.onEditProfile,
     required this.onOpenDustbin,
     required this.onConnectOneDrive,
     required this.onOpenOneDriveSettings,
-    required this.onOpenJianguoyunSettings,
-    required this.onSyncJianguoyun,
-    required this.onDisconnectJianguoyun,
   });
 
   final CoupleProfile profile;
   final List<DiaryEntry> entries;
   final OneDriveSyncConfig? oneDriveConfig;
-  final WebDavSyncConfig? jianguoyunConfig;
   final DateTime? lastSyncedAt;
-  final bool isSyncingOneDrive;
-  final double? oneDriveSyncProgress;
-  final String? oneDriveSyncLabel;
-  final bool isEditingJianguoyun;
-  final bool isSyncingJianguoyun;
+  final DateTime? lastSyncFailedAt;
+  final String? lastSyncFailureMessage;
   final VoidCallback onEditProfile;
   final Future<void> Function() onOpenDustbin;
   final Future<void> Function() onConnectOneDrive;
   final Future<void> Function() onOpenOneDriveSettings;
-  final Future<void> Function() onOpenJianguoyunSettings;
-  final Future<void> Function() onSyncJianguoyun;
-  final Future<void> Function() onDisconnectJianguoyun;
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +44,8 @@ class RealUsTab extends StatelessWidget {
         DateTime.now().difference(profile.togetherSince).inDays + 1;
 
     return DiaryPage(
+      showBackground: false,
+      respectTopSafeArea: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -87,25 +74,11 @@ class RealUsTab extends StatelessWidget {
                       ? () => onConnectOneDrive()
                       : onOpenOneDriveSettings,
                 ),
-                if (isSyncingOneDrive) ...[
-                  const SizedBox(height: 12),
-                  LinearProgressIndicator(value: oneDriveSyncProgress),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      oneDriveSyncLabel ?? '正在把今天的记忆放回云端...',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
-                    ),
-                  ),
-                ],
                 const _SettingsDivider(),
                 _SettingsTile(
                   icon: Icons.tune_rounded,
                   title: '其他设置',
-                  subtitle: '备用同步、回收站、关于',
+                  subtitle: '回收站、关于',
                   onTap: () => _openOtherSettings(
                     context,
                     commentCount: commentCount,
@@ -145,6 +118,16 @@ class RealUsTab extends StatelessWidget {
   String _oneDriveSubtitle() {
     if (oneDriveConfig == null) {
       return '主同步通道';
+    }
+    if (lastSyncFailedAt != null &&
+        (lastSyncedAt == null || lastSyncFailedAt!.isAfter(lastSyncedAt!))) {
+      final failedText =
+          '${formatDiaryDate(lastSyncFailedAt!)} ${formatDiaryTime(lastSyncFailedAt!)}';
+      final message = lastSyncFailureMessage;
+      if (message != null && message.isNotEmpty) {
+        return '最近失败：$failedText';
+      }
+      return '最近失败：$failedText';
     }
     final syncedText = lastSyncedAt == null
         ? '尚未同步'
@@ -186,32 +169,6 @@ class RealUsTab extends StatelessWidget {
                   ),
                   child: Column(
                     children: [
-                      _SettingsTile(
-                        icon: Icons.backup_rounded,
-                        title: '备用同步',
-                        subtitle: jianguoyunConfig == null
-                            ? '坚果云未配置'
-                            : '坚果云：${jianguoyunConfig!.remoteFolder}',
-                        trailing: _StatusPill(
-                          label: jianguoyunConfig == null ? '备用' : '已配置',
-                          active: jianguoyunConfig != null,
-                        ),
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          onOpenJianguoyunSettings();
-                        },
-                      ),
-                      if (jianguoyunConfig != null) ...[
-                        const SizedBox(height: 10),
-                        _InlineSyncActions(
-                          isBusy: isEditingJianguoyun || isSyncingJianguoyun,
-                          primaryLabel: isSyncingJianguoyun ? '同步中...' : '立即同步',
-                          secondaryLabel: '断开连接',
-                          onPrimary: onSyncJianguoyun,
-                          onSecondary: onDisconnectJianguoyun,
-                        ),
-                      ],
-                      const _SettingsDivider(),
                       _SettingsTile(
                         icon: Icons.restore_from_trash_rounded,
                         title: '回收站',
@@ -257,11 +214,11 @@ class RealUsTab extends StatelessWidget {
               SizedBox(height: 14),
               Text('作者：Eric Chen'),
               SizedBox(height: 8),
-              Text('版本：0.7.4+33'),
+              Text('版本：1.1.1+49'),
               SizedBox(height: 14),
               Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
               SizedBox(height: 8),
-              Text('OneDrive 是主要同步方式，坚果云保留为备用方案。'),
+              Text('OneDrive 是当前唯一同步方式。'),
               SizedBox(height: 14),
               Text('愿这些普通日子，都被好好留下。'),
             ],
@@ -447,45 +404,6 @@ class _StatusPill extends StatelessWidget {
     return DiaryBadge(
       label: label,
       tone: active ? DiaryBadgeTone.rose : DiaryBadgeTone.ink,
-    );
-  }
-}
-
-class _InlineSyncActions extends StatelessWidget {
-  const _InlineSyncActions({
-    required this.isBusy,
-    required this.primaryLabel,
-    required this.secondaryLabel,
-    required this.onPrimary,
-    required this.onSecondary,
-  });
-
-  final bool isBusy;
-  final String primaryLabel;
-  final String secondaryLabel;
-  final Future<void> Function() onPrimary;
-  final Future<void> Function() onSecondary;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          FilledButton.tonalIcon(
-            onPressed: isBusy ? null : onPrimary,
-            icon: const Icon(Icons.sync_rounded),
-            label: Text(primaryLabel),
-          ),
-          OutlinedButton.icon(
-            onPressed: isBusy ? null : onSecondary,
-            icon: const Icon(Icons.link_off_rounded),
-            label: Text(secondaryLabel),
-          ),
-        ],
-      ),
     );
   }
 }

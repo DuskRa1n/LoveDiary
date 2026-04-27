@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../data/diary_storage.dart';
+import '../sync_models.dart';
 import 'onedrive_models.dart';
 
 class OneDriveAuthException implements Exception {
@@ -20,6 +21,7 @@ class OneDriveAuthService {
   static const _defaultTenant = 'consumers';
   static const _defaultRemoteFolder = 'love_diary';
   static const _graphBaseUrl = 'https://graph.microsoft.com/v1.0';
+  static const _requestTimeout = Duration(seconds: 45);
 
   final DiaryStorage storage;
 
@@ -29,6 +31,7 @@ class OneDriveAuthService {
 
   Future<void> disconnect() async {
     await storage.clearOneDriveSyncConfig();
+    await storage.resetSyncState(SyncProvider.oneDrive);
   }
 
   Future<OneDriveDeviceCodeSession> startDeviceCodeFlow({
@@ -115,7 +118,9 @@ class OneDriveAuthService {
         continue;
       }
       if (error == 'authorization_declined') {
-        throw const OneDriveAuthException('OneDrive authorization was declined.');
+        throw const OneDriveAuthException(
+          'OneDrive authorization was declined.',
+        );
       }
       if (error == 'expired_token') {
         throw const OneDriveAuthException('OneDrive device code expired.');
@@ -127,7 +132,9 @@ class OneDriveAuthService {
       );
     }
 
-    throw const OneDriveAuthException('Timed out waiting for OneDrive sign-in.');
+    throw const OneDriveAuthException(
+      'Timed out waiting for OneDrive sign-in.',
+    );
   }
 
   Future<String> getValidAccessToken() async {
@@ -161,7 +168,8 @@ class OneDriveAuthService {
 
     final refreshedConfig = config.copyWith(
       accessToken: jsonMap['access_token'] as String,
-      refreshToken: (jsonMap['refresh_token'] as String?) ?? config.refreshToken,
+      refreshToken:
+          (jsonMap['refresh_token'] as String?) ?? config.refreshToken,
       expiresAt: DateTime.now().add(
         Duration(seconds: (jsonMap['expires_in'] as num?)?.toInt() ?? 3600),
       ),
@@ -181,7 +189,9 @@ class OneDriveAuthService {
   Future<(String?, String?)> _fetchProfile(String accessToken) async {
     try {
       final response = await _sendJsonRequest(
-        uri: Uri.parse('$_graphBaseUrl/me?\$select=displayName,userPrincipalName'),
+        uri: Uri.parse(
+          '$_graphBaseUrl/me?\$select=displayName,userPrincipalName',
+        ),
         accessToken: accessToken,
       );
       final jsonMap = _decodeJson(response.body);
@@ -197,21 +207,25 @@ class OneDriveAuthService {
     }
   }
 
-  Future<_HttpResponseData> _postForm(
-    Uri uri,
-    Map<String, String> form,
-  ) async {
-    final client = HttpClient();
+  Future<_HttpResponseData> _postForm(Uri uri, Map<String, String> form) async {
+    final client = HttpClient()..connectionTimeout = _requestTimeout;
     try {
-      final request = await client.postUrl(uri);
+      final request = await client.postUrl(uri).timeout(_requestTimeout);
       request.headers.set(
         HttpHeaders.contentTypeHeader,
         'application/x-www-form-urlencoded',
       );
       request.write(Uri(queryParameters: form).query);
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(_requestTimeout);
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_requestTimeout);
       return _HttpResponseData(statusCode: response.statusCode, body: body);
+    } on TimeoutException catch (error) {
+      throw OneDriveAuthException(
+        'OneDrive authorization request timed out: $error',
+      );
     } finally {
       client.close(force: true);
     }
@@ -221,14 +235,22 @@ class OneDriveAuthService {
     required Uri uri,
     required String accessToken,
   }) async {
-    final client = HttpClient();
+    final client = HttpClient()..connectionTimeout = _requestTimeout;
     try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $accessToken');
+      final request = await client.getUrl(uri).timeout(_requestTimeout);
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer $accessToken',
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(_requestTimeout);
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(_requestTimeout);
       return _HttpResponseData(statusCode: response.statusCode, body: body);
+    } on TimeoutException catch (error) {
+      throw OneDriveAuthException('OneDrive profile request timed out: $error');
     } finally {
       client.close(force: true);
     }

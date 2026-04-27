@@ -1,4 +1,4 @@
-package com.example.love_diary
+package com.ericchen.lovediary
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -75,10 +75,22 @@ class SyncForegroundService : Service() {
             Notification.Builder(this)
         }
 
+        val progressPercent = if (progress in 0.0..1.0) {
+            (progress * 100).toInt()
+        } else {
+            null
+        }
+        val subtitle = if (progressPercent == null) {
+            "OneDrive 正在同步 · 点击返回查看"
+        } else {
+            "OneDrive 同步 $progressPercent% · 点击返回查看"
+        }
+
         builder
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("恋爱日记正在同步")
-            .setContentText(label)
+            .setContentTitle(label)
+            .setContentText(subtitle)
+            .setStyle(Notification.BigTextStyle().setBigContentTitle(label).bigText(subtitle))
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -88,8 +100,9 @@ class SyncForegroundService : Service() {
             builder.setCategory(Notification.CATEGORY_PROGRESS)
         }
 
-        if (progress in 0.0..1.0) {
-            builder.setProgress(100, (progress * 100).toInt(), false)
+        if (progressPercent != null) {
+            builder.setProgress(100, progressPercent, false)
+            builder.setSubText("$progressPercent%")
         } else {
             builder.setProgress(0, 0, true)
         }
@@ -142,9 +155,9 @@ class SyncForegroundService : Service() {
     }
 
     companion object {
-        const val ACTION_START = "com.example.love_diary.sync.START"
-        const val ACTION_UPDATE = "com.example.love_diary.sync.UPDATE"
-        const val ACTION_STOP = "com.example.love_diary.sync.STOP"
+        const val ACTION_START = "com.ericchen.lovediary.sync.START"
+        const val ACTION_UPDATE = "com.ericchen.lovediary.sync.UPDATE"
+        const val ACTION_STOP = "com.ericchen.lovediary.sync.STOP"
         const val EXTRA_LABEL = "label"
         const val EXTRA_PROGRESS = "progress"
 

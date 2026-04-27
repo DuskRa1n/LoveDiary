@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
+import 'secret_store.dart';
 import '../models/diary_models.dart';
 import '../sync/onedrive/onedrive_models.dart';
 import '../sync/sync_models.dart';
-import '../sync/webdav/webdav_models.dart';
 
 class StorageMaintenanceResult {
   const StorageMaintenanceResult({
@@ -49,14 +50,20 @@ class _AttachmentPreparationResult {
 }
 
 class DiaryStorage {
-  const DiaryStorage({this.rootDirectoryPath, this.nowProvider = DateTime.now});
+  const DiaryStorage({
+    this.rootDirectoryPath,
+    this.nowProvider = DateTime.now,
+    SecretStore? secretStore,
+  }) : _secretStoreOverride = secretStore;
 
   static const MethodChannel _platformPathsChannel = MethodChannel(
     'love_diary/platform_paths',
   );
+  static final SecretStore _defaultSecretStore = FlutterSecretStore();
 
   final String? rootDirectoryPath;
   final DateTime Function() nowProvider;
+  final SecretStore? _secretStoreOverride;
 
   static const _profileFileName = 'profile.json';
   static const _entriesDirectoryName = 'entries';
@@ -71,11 +78,15 @@ class DiaryStorage {
   static const _entryDraftFileName = 'entry_draft.json';
   static const _syncDirectoryName = 'sync';
   static const _syncStateFileName = 'state.json';
+  static const _oneDriveSyncStateFileName = 'onedrive_state.json';
   static const _tombstonesFileName = 'tombstones.json';
-  static const _webDavConfigFileName = 'webdav_account.json';
   static const _oneDriveConfigFileName = 'onedrive_account.json';
   static const _dustbinRetention = Duration(days: 7);
   static const _imageTransformTimeout = Duration(seconds: 20);
+  static const _oneDriveAccessTokenKey = 'onedrive_access_token';
+  static const _oneDriveRefreshTokenKey = 'onedrive_refresh_token';
+
+  SecretStore get _secretStore => _secretStoreOverride ?? _defaultSecretStore;
 
   Future<List<DiaryEntry>> loadEntries() async {
     await purgeExpiredDustbinEntries();
@@ -122,6 +133,13 @@ class DiaryStorage {
     }
 
     final entryIds = entries.map((entry) => entry.id).toSet();
+    for (final entry in entries) {
+      final entryFile = File(
+        _join(rootDirectory.path, _entriesDirectoryName, '${entry.id}.json'),
+      );
+      await _writeJsonAtomically(entryFile, entry.toJson());
+    }
+
     final existingFiles = await entriesDirectory
         .list()
         .where((entity) => entity is File && entity.path.endsWith('.json'))
@@ -134,16 +152,6 @@ class DiaryStorage {
       if (!entryIds.contains(id)) {
         await file.delete();
       }
-    }
-
-    for (final entry in entries) {
-      final entryFile = File(
-        _join(rootDirectory.path, _entriesDirectoryName, '${entry.id}.json'),
-      );
-      final payload = const JsonEncoder.withIndent(
-        '  ',
-      ).convert(entry.toJson());
-      await entryFile.writeAsString(payload);
     }
 
     await _writeManifestCache(entries);
@@ -200,6 +208,10 @@ class DiaryStorage {
         if (item.id != entry.id) item,
     ];
     await saveEntries(entries);
+    await _appendTombstones([
+      _entryRelativePath(entry.id),
+      ...entry.attachments.expand((attachment) => attachment.storedPaths),
+    ]);
   }
 
   Future<List<DeletedDiaryEntry>> loadDustbinEntries() async {
@@ -327,9 +339,7 @@ class DiaryStorage {
   Future<void> saveProfile(CoupleProfile profile) async {
     final rootDirectory = await _ensureRootDirectory();
     final profileFile = File(_join(rootDirectory.path, _profileFileName));
-    await profileFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(profile.toJson()),
-    );
+    await _writeJsonAtomically(profileFile, profile.toJson());
   }
 
   Future<Directory> ensureAttachmentsDirectory() async {
@@ -441,7 +451,7 @@ class DiaryStorage {
     for (final attachment in attachments) {
       for (final storedPath in attachment.storedPaths) {
         final relativePath = _normalizeStoredPath(storedPath);
-        if (relativePath == null || _isAbsolutePath(relativePath)) {
+        if (_isAbsolutePath(relativePath)) {
           final absoluteFile = File(storedPath);
           if (await absoluteFile.exists()) {
             await absoluteFile.delete();
@@ -463,35 +473,34 @@ class DiaryStorage {
 
   Future<String> resolveSyncFileAbsolutePath(String relativePath) async {
     final rootDirectory = await _ensureRootDirectory();
-    final normalizedRelativePath = relativePath.replaceAll(
-      '/',
-      Platform.pathSeparator,
-    );
-    return '${rootDirectory.path}${Platform.pathSeparator}$normalizedRelativePath';
+    return _resolveProtectedSyncPath(rootDirectory.path, relativePath);
   }
 
   Future<void> deleteSyncFile(String relativePath) async {
     final rootDirectory = await _ensureRootDirectory();
     final normalizedPath = _normalizeStoredPath(relativePath);
-    if (normalizedPath == null) {
-      return;
-    }
+    final protectedPath = _normalizeProtectedRelativePath(
+      normalizedPath,
+      allowEmpty: false,
+    );
 
-    final file = File(_resolveStoredPath(rootDirectory.path, normalizedPath));
+    final file = File(_resolveProtectedSyncPath(rootDirectory.path, protectedPath));
     if (await file.exists()) {
       await file.delete();
     }
 
-    final lastSeparatorIndex = normalizedPath.lastIndexOf('/');
+    final lastSeparatorIndex = protectedPath.lastIndexOf('/');
     if (lastSeparatorIndex != -1) {
-      final directoryPath = normalizedPath.substring(0, lastSeparatorIndex);
-      final directory = Directory(_join(rootDirectory.path, directoryPath));
+      final directoryPath = protectedPath.substring(0, lastSeparatorIndex);
+      final directory = Directory(
+        _resolveProtectedSyncPath(rootDirectory.path, directoryPath),
+      );
       if (await directory.exists() && await directory.list().isEmpty) {
         await directory.delete();
       }
     }
 
-    await _removeTombstones([normalizedPath]);
+    await _removeTombstones([protectedPath]);
   }
 
   Future<DiaryDraft?> loadEntryDraft() async {
@@ -533,9 +542,7 @@ class DiaryStorage {
     final draftFile = File(
       _join(rootDirectory.path, _draftsDirectoryName, _entryDraftFileName),
     );
-    await draftFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(draft.toJson()),
-    );
+    await _writeJsonAtomically(draftFile, draft.toJson());
   }
 
   Future<void> clearEntryDraft() async {
@@ -572,9 +579,24 @@ class DiaryStorage {
     return directory;
   }
 
-  Future<SyncState> loadSyncState() async {
+  Future<SyncState> loadSyncState([
+    SyncProvider provider = SyncProvider.oneDrive,
+  ]) async {
     final syncDirectory = await ensureSyncDirectory();
-    final stateFile = File(_join(syncDirectory.path, _syncStateFileName));
+    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    if (!await stateFile.exists() && provider == SyncProvider.oneDrive) {
+      final legacyFile = File(_join(syncDirectory.path, _syncStateFileName));
+      if (await legacyFile.exists()) {
+        try {
+          final jsonMap =
+              jsonDecode(await legacyFile.readAsString())
+                  as Map<String, dynamic>;
+          return SyncState.fromJson(jsonMap);
+        } catch (_) {
+          return SyncState.initial();
+        }
+      }
+    }
     if (!await stateFile.exists()) {
       return SyncState.initial();
     }
@@ -588,12 +610,29 @@ class DiaryStorage {
     }
   }
 
-  Future<void> saveSyncState(SyncState state) async {
+  Future<void> saveSyncState(
+    SyncState state, [
+    SyncProvider provider = SyncProvider.oneDrive,
+  ]) async {
     final syncDirectory = await ensureSyncDirectory();
-    final stateFile = File(_join(syncDirectory.path, _syncStateFileName));
-    await stateFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(state.toJson()),
-    );
+    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    await _writeJsonAtomically(stateFile, state.toJson());
+  }
+
+  Future<void> resetSyncState([
+    SyncProvider provider = SyncProvider.oneDrive,
+  ]) async {
+    final syncDirectory = await ensureSyncDirectory();
+    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    if (await stateFile.exists()) {
+      await stateFile.delete();
+    }
+    if (provider == SyncProvider.oneDrive) {
+      final legacyFile = File(_join(syncDirectory.path, _syncStateFileName));
+      if (await legacyFile.exists()) {
+        await legacyFile.delete();
+      }
+    }
   }
 
   Future<List<SyncTombstone>> loadTombstones() async {
@@ -619,42 +658,27 @@ class DiaryStorage {
   Future<void> saveTombstones(List<SyncTombstone> tombstones) async {
     final syncDirectory = await ensureSyncDirectory();
     final tombstonesFile = File(_join(syncDirectory.path, _tombstonesFileName));
-    await tombstonesFile.writeAsString(
-      const JsonEncoder.withIndent(
-        '  ',
-      ).convert(tombstones.map((item) => item.toJson()).toList()),
+    await _writeJsonAtomically(
+      tombstonesFile,
+      tombstones.map((item) => item.toJson()).toList(),
     );
   }
 
-  Future<WebDavSyncConfig?> loadWebDavSyncConfig() async {
-    final syncDirectory = await ensureSyncDirectory();
-    final configFile = File(_join(syncDirectory.path, _webDavConfigFileName));
-    if (!await configFile.exists()) {
-      return null;
+  Future<void> acknowledgeTombstones(List<String> rawPaths) async {
+    final relativePaths = rawPaths
+        .map(_normalizeStoredPath)
+        .map((path) => _normalizeProtectedRelativePath(path, allowEmpty: false))
+        .toSet();
+    if (relativePaths.isEmpty) {
+      return;
     }
 
-    try {
-      final jsonMap =
-          jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
-      return WebDavSyncConfig.fromJson(jsonMap);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> saveWebDavSyncConfig(WebDavSyncConfig config) async {
-    final syncDirectory = await ensureSyncDirectory();
-    final configFile = File(_join(syncDirectory.path, _webDavConfigFileName));
-    await configFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(config.toJson()),
-    );
-  }
-
-  Future<void> clearWebDavSyncConfig() async {
-    final syncDirectory = await ensureSyncDirectory();
-    final configFile = File(_join(syncDirectory.path, _webDavConfigFileName));
-    if (await configFile.exists()) {
-      await configFile.delete();
+    final tombstones = await loadTombstones();
+    final filtered = tombstones
+        .where((item) => !relativePaths.contains(item.relativePath))
+        .toList();
+    if (filtered.length != tombstones.length) {
+      await saveTombstones(filtered);
     }
   }
 
@@ -668,7 +692,32 @@ class DiaryStorage {
     try {
       final jsonMap =
           jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
-      return OneDriveSyncConfig.fromJson(jsonMap);
+      final config = OneDriveSyncConfig.fromJson(jsonMap);
+      final accessToken = await _readOneDriveSecret(
+        _oneDriveAccessTokenKey,
+      ) ?? jsonMap['access_token'] as String?;
+      final refreshToken = await _readOneDriveSecret(
+        _oneDriveRefreshTokenKey,
+      ) ?? jsonMap['refresh_token'] as String?;
+      if (accessToken == null ||
+          accessToken.isEmpty ||
+          refreshToken == null ||
+          refreshToken.isEmpty) {
+        return null;
+      }
+
+      if ((jsonMap['access_token'] as String?)?.isNotEmpty ?? false) {
+        await _saveOneDriveSecrets(
+          accessToken: accessToken,
+          refreshToken: refreshToken,
+        );
+        await _writeJsonAtomically(configFile, config.toStorageJson());
+      }
+
+      return config.copyWith(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
     } catch (_) {
       return null;
     }
@@ -677,9 +726,11 @@ class DiaryStorage {
   Future<void> saveOneDriveSyncConfig(OneDriveSyncConfig config) async {
     final syncDirectory = await ensureSyncDirectory();
     final configFile = File(_join(syncDirectory.path, _oneDriveConfigFileName));
-    await configFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(config.toJson()),
+    await _saveOneDriveSecrets(
+      accessToken: config.accessToken,
+      refreshToken: config.refreshToken,
     );
+    await _writeJsonAtomically(configFile, config.toStorageJson());
   }
 
   Future<void> clearOneDriveSyncConfig() async {
@@ -688,6 +739,7 @@ class DiaryStorage {
     if (await configFile.exists()) {
       await configFile.delete();
     }
+    await _clearOneDriveSecrets();
   }
 
   Future<List<LocalSyncFile>> listSyncFiles() async {
@@ -967,9 +1019,7 @@ class DiaryStorage {
           )
           .toList(),
     };
-    await manifestFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(manifest),
-    );
+    await _writeJsonAtomically(manifestFile, manifest);
   }
 
   Future<DiaryEntry> _normalizeEntryForSave(DiaryEntry entry) async {
@@ -1235,9 +1285,6 @@ class DiaryStorage {
     }
 
     final currentRelativePath = _normalizeStoredPath(sourcePath);
-    if (currentRelativePath == null) {
-      return null;
-    }
 
     final currentFileName = _fileNameFromPath(currentRelativePath);
     final extension = _extensionFromFileName(
@@ -1289,9 +1336,6 @@ class DiaryStorage {
         continue;
       }
       final normalized = _normalizeStoredPath(candidate);
-      if (normalized == null) {
-        continue;
-      }
       final file = File(_resolveStoredPath(rootPath, normalized));
       if (await file.exists()) {
         return (normalized, file);
@@ -1302,9 +1346,6 @@ class DiaryStorage {
 
   Future<bool> _storedFileExists(String rootPath, String storedPath) async {
     final normalized = _normalizeStoredPath(storedPath);
-    if (normalized == null) {
-      return false;
-    }
     return File(_resolveStoredPath(rootPath, normalized)).exists();
   }
 
@@ -1314,9 +1355,6 @@ class DiaryStorage {
   ) async {
     for (final relativePath in relativePaths.toSet()) {
       final normalized = _normalizeStoredPath(relativePath);
-      if (normalized == null) {
-        continue;
-      }
       final file = File(_resolveStoredPath(rootPath, normalized));
       if (await file.exists()) {
         await file.delete();
@@ -1426,6 +1464,53 @@ class DiaryStorage {
     }
   }
 
+  Future<void> _writeJsonAtomically(File file, Object? value) async {
+    await _writeStringAtomically(
+      file,
+      const JsonEncoder.withIndent('  ').convert(value),
+    );
+  }
+
+  Future<void> _writeStringAtomically(File file, String content) async {
+    await file.parent.create(recursive: true);
+    final temporaryFile = File(
+      '${file.path}.tmp.${DateTime.now().microsecondsSinceEpoch}',
+    );
+    await temporaryFile.writeAsString(content, flush: true);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    await temporaryFile.rename(file.path);
+  }
+
+  Future<String?> _readOneDriveSecret(String key) async {
+    try {
+      return await _secretStore.read(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveOneDriveSecrets({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _secretStore.write(_oneDriveAccessTokenKey, accessToken);
+    await _secretStore.write(_oneDriveRefreshTokenKey, refreshToken);
+  }
+
+  Future<void> _clearOneDriveSecrets() async {
+    await _secretStore.delete(_oneDriveAccessTokenKey);
+    await _secretStore.delete(_oneDriveRefreshTokenKey);
+  }
+
+  String _syncStateFileNameFor(SyncProvider provider) {
+    switch (provider) {
+      case SyncProvider.oneDrive:
+        return _oneDriveSyncStateFileName;
+    }
+  }
+
   String _join(
     String first, [
     String? second,
@@ -1443,8 +1528,8 @@ class DiaryStorage {
 
   bool _isSyncMetadataFile(String relativePath) {
     return relativePath == '$_syncDirectoryName/$_syncStateFileName' ||
+        relativePath == '$_syncDirectoryName/$_oneDriveSyncStateFileName' ||
         relativePath == '$_syncDirectoryName/$_tombstonesFileName' ||
-        relativePath == '$_syncDirectoryName/$_webDavConfigFileName' ||
         relativePath == '$_syncDirectoryName/$_oneDriveConfigFileName';
   }
 
@@ -1531,7 +1616,7 @@ class DiaryStorage {
   Future<void> _appendTombstones(List<String> rawPaths) async {
     final relativePaths = rawPaths
         .map(_normalizeStoredPath)
-        .whereType<String>()
+        .map((path) => _normalizeProtectedRelativePath(path))
         .where((path) => !_isDraftFile(path) && !_isCacheFile(path))
         .toSet();
     if (relativePaths.isEmpty) {
@@ -1559,7 +1644,7 @@ class DiaryStorage {
   Future<void> _removeTombstones(List<String> rawPaths) async {
     final relativePaths = rawPaths
         .map(_normalizeStoredPath)
-        .whereType<String>()
+        .map((path) => _normalizeProtectedRelativePath(path))
         .toSet();
     if (relativePaths.isEmpty) {
       return;
@@ -1582,10 +1667,9 @@ class DiaryStorage {
         '${entry.id}.json',
       ),
     );
-    await dustbinEntryFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(
-        DeletedDiaryEntry(entry: entry, deletedAt: nowProvider()).toJson(),
-      ),
+    await _writeJsonAtomically(
+      dustbinEntryFile,
+      DeletedDiaryEntry(entry: entry, deletedAt: nowProvider()).toJson(),
     );
 
     final sourceDirectory = _entryAttachmentsDirectoryAt(
@@ -1602,8 +1686,8 @@ class DiaryStorage {
     }
   }
 
-  String? _normalizeStoredPath(String storedPath) {
-    final normalized = storedPath.replaceAll('\\', '/');
+  String _normalizeStoredPath(String storedPath) {
+    final normalized = storedPath.replaceAll('\\', '/').trim();
     if (_isAbsolutePath(normalized)) {
       final attachmentsMarker = '/$_attachmentsDirectoryName/';
       final draftsMarker = '/$_draftsDirectoryName/';
@@ -1636,6 +1720,47 @@ class DiaryStorage {
     final normalized = path.replaceAll('\\', '/');
     return normalized.startsWith('/') ||
         RegExp(r'^[a-zA-Z]:/').hasMatch(normalized);
+  }
+
+  String _normalizeProtectedRelativePath(
+    String storedPath, {
+    bool allowEmpty = true,
+  }) {
+    final normalized = storedPath.replaceAll('\\', '/').trim();
+    if (normalized.isEmpty) {
+      if (allowEmpty) {
+        return '';
+      }
+      throw const FileSystemException('Sync path must not be empty.');
+    }
+    if (_isAbsolutePath(normalized)) {
+      throw FileSystemException('Refusing absolute sync path: $normalized');
+    }
+
+    final segments = normalized.split('/');
+    if (segments.any(
+      (segment) => segment.isEmpty || segment == '.' || segment == '..',
+    )) {
+      throw FileSystemException('Refusing unsafe sync path: $normalized');
+    }
+    return segments.join('/');
+  }
+
+  String _resolveProtectedSyncPath(String rootPath, String relativePath) {
+    final normalizedRoot = p.normalize(p.absolute(rootPath));
+    final safeRelativePath = _normalizeProtectedRelativePath(
+      relativePath,
+      allowEmpty: false,
+    );
+    final resolvedPath = p.normalize(
+      p.join(normalizedRoot, p.joinAll(safeRelativePath.split('/'))),
+    );
+    if (!p.isWithin(normalizedRoot, resolvedPath)) {
+      throw FileSystemException(
+        'Sync path escaped storage root: $relativePath',
+      );
+    }
+    return resolvedPath;
   }
 
   bool _shouldDeleteOriginalAfterMove(String rootPath, String sourcePath) {

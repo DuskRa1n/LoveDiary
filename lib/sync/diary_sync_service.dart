@@ -6,24 +6,32 @@ class DiarySyncService {
   const DiarySyncService({
     required this.storage,
     required this.remoteSource,
+    required this.provider,
     this.attachmentPolicy = const AttachmentSyncPolicy(),
+    this.onRemoteProgress,
   });
 
   final DiaryStorage storage;
   final DiarySyncRemoteSource remoteSource;
+  final SyncProvider provider;
   final AttachmentSyncPolicy attachmentPolicy;
+  final SyncProgressCallback? onRemoteProgress;
 
   Future<SyncPlan> buildPlan() async {
     final localFiles = (await storage.listSyncFiles())
         .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
         .toList();
-    final syncState = await storage.loadSyncState();
+    final syncState = await storage.loadSyncState(provider);
     final tombstones = (await storage.loadTombstones())
         .where(
           (item) => attachmentPolicy.includeTombstonePath(item.relativePath),
         )
         .toList();
-    final remoteSnapshot = await remoteSource.fetchSnapshot();
+    final remoteSnapshot = await remoteSource.fetchSnapshot(
+      baseline: syncState,
+      onProgress: onRemoteProgress,
+    );
+    final hasUsableRemoteBaseline = syncState.hasCompleteRemoteNodeBaseline;
     final remoteFiles = remoteSnapshot.files
         .where((file) => attachmentPolicy.includeRemotePath(file.relativePath))
         .toList();
@@ -50,8 +58,12 @@ class DiarySyncService {
       final localFile = localByPath[path];
       final remoteFile = remoteByPath[path];
       final hasTombstone = tombstonePaths.contains(path);
-      final lastLocalFingerprint = syncState.lastKnownLocalFingerprints[path];
-      final lastRemoteRevision = syncState.lastKnownRemoteRevisions[path];
+      final lastLocalFingerprint = hasUsableRemoteBaseline
+          ? syncState.lastKnownLocalFingerprints[path]
+          : null;
+      final lastRemoteRevision = hasUsableRemoteBaseline
+          ? syncState.lastKnownRemoteRevisions[path]
+          : null;
       final hasSyncBaseline =
           lastLocalFingerprint != null || lastRemoteRevision != null;
 

@@ -1,7 +1,12 @@
 import 'sync_models.dart';
 
+typedef SyncProgressCallback = void Function(double progress, String label);
+
 abstract class DiarySyncRemoteSource {
-  Future<RemoteSyncSnapshot> fetchSnapshot();
+  Future<RemoteSyncSnapshot> fetchSnapshot({
+    SyncState? baseline,
+    SyncProgressCallback? onProgress,
+  });
 
   Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
 

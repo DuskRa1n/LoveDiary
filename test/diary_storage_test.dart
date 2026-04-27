@@ -1,19 +1,50 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/data/diary_storage.dart';
+import 'package:love_diary/data/secret_store.dart';
 import 'package:love_diary/models/diary_models.dart';
+import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
+
+class MemorySecretStore implements SecretStore {
+  final Map<String, String> _values = {};
+
+  @override
+  Future<void> delete(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    return _values[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    _values[key] = value;
+  }
+}
+
+final List<int> _tinyPngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0n0AAAAASUVORK5CYII=',
+);
 
 void main() {
   late Directory tempDirectory;
   late DiaryStorage storage;
+  late MemorySecretStore secretStore;
 
   setUp(() async {
     tempDirectory = await Directory.systemTemp.createTemp(
       'love_diary_storage_',
     );
-    storage = DiaryStorage(rootDirectoryPath: tempDirectory.path);
+    secretStore = MemorySecretStore();
+    storage = DiaryStorage(
+      rootDirectoryPath: tempDirectory.path,
+      secretStore: secretStore,
+    );
   });
 
   tearDown(() async {
@@ -96,6 +127,7 @@ void main() {
     final state = SyncState(
       lastSyncedAt: DateTime(2026, 4, 9, 10, 0),
       lastKnownRemoteCursor: 'cursor_001',
+      lastKnownRemoteRootId: 'root_001',
       lastKnownLocalFingerprints: const {'profile.json': '10:100'},
       lastKnownRemoteRevisions: const {'profile.json': 'rev_profile_1'},
     );
@@ -113,12 +145,77 @@ void main() {
     final loadedTombstones = await storage.loadTombstones();
 
     expect(loadedState.lastKnownRemoteCursor, 'cursor_001');
+    expect(loadedState.lastKnownRemoteRootId, 'root_001');
     expect(
       loadedState.lastKnownRemoteRevisions['profile.json'],
       'rev_profile_1',
     );
     expect(loadedTombstones, hasLength(1));
     expect(loadedTombstones.single.relativePath, 'entries/deleted_entry.json');
+  });
+
+  test('OneDrive 凭据会写入安全存储而不是配置文件', () async {
+    await storage.saveOneDriveSyncConfig(
+      OneDriveSyncConfig(
+        clientId: 'client',
+        tenant: 'common',
+        remoteFolder: 'love_diary',
+        accessToken: 'access_token_secret',
+        refreshToken: 'refresh_token_secret',
+        expiresAt: DateTime(2026, 4, 9, 12, 0),
+        accountName: 'Eric',
+        accountEmail: 'eric@example.com',
+      ),
+    );
+
+    final syncDirectory = await storage.ensureSyncDirectory();
+    final configFile = File(
+      '${syncDirectory.path}${Platform.pathSeparator}onedrive_account.json',
+    );
+    final configJson =
+        jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
+    final loadedConfig = await storage.loadOneDriveSyncConfig();
+
+    expect(configJson.containsKey('access_token'), isFalse);
+    expect(configJson.containsKey('refresh_token'), isFalse);
+    expect(await secretStore.read('onedrive_access_token'), 'access_token_secret');
+    expect(await secretStore.read('onedrive_refresh_token'), 'refresh_token_secret');
+    expect(loadedConfig?.accessToken, 'access_token_secret');
+    expect(loadedConfig?.refreshToken, 'refresh_token_secret');
+  });
+
+  test('旧版明文 OneDrive 凭据会在读取时迁移到安全存储', () async {
+    final syncDirectory = await storage.ensureSyncDirectory();
+    final configFile = File(
+      '${syncDirectory.path}${Platform.pathSeparator}onedrive_account.json',
+    );
+    await configFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert({
+        'client_id': 'client',
+        'tenant': 'common',
+        'remote_folder': 'love_diary',
+        'access_token': 'legacy_access',
+        'refresh_token': 'legacy_refresh',
+        'expires_at': '2026-04-09T12:00:00.000',
+        'sync_on_write': true,
+        'minimum_sync_interval_minutes': 0,
+        'max_destructive_actions': 3,
+        'sync_originals': false,
+        'download_originals': false,
+        'local_original_retention_days': 30,
+      }),
+    );
+
+    final loadedConfig = await storage.loadOneDriveSyncConfig();
+    final rewrittenJson =
+        jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
+
+    expect(loadedConfig?.accessToken, 'legacy_access');
+    expect(loadedConfig?.refreshToken, 'legacy_refresh');
+    expect(await secretStore.read('onedrive_access_token'), 'legacy_access');
+    expect(await secretStore.read('onedrive_refresh_token'), 'legacy_refresh');
+    expect(rewrittenJson.containsKey('access_token'), isFalse);
+    expect(rewrittenJson.containsKey('refresh_token'), isFalse);
   });
 
   test('会更新单篇日记并记录最后修改时间', () async {
@@ -185,7 +282,7 @@ void main() {
       tombstones.any(
         (item) => item.relativePath == 'entries/entry_delete_1.json',
       ),
-      isFalse,
+      isTrue,
     );
   });
 
@@ -217,7 +314,7 @@ void main() {
     final sourceFile = File(
       '${tempDirectory.path}${Platform.pathSeparator}source.jpg',
     );
-    await sourceFile.writeAsBytes(List<int>.filled(8, 7));
+    await sourceFile.writeAsBytes(_tinyPngBytes);
 
     final importedAttachment = await storage.importAttachment(
       sourcePath: sourceFile.path,
@@ -255,7 +352,7 @@ void main() {
       final sourceFile = File(
         '${tempDirectory.path}${Platform.pathSeparator}draft_source.jpg',
       );
-      await sourceFile.writeAsBytes(List<int>.filled(16, 3));
+      await sourceFile.writeAsBytes(_tinyPngBytes);
 
       final importedAttachment = await storage.importAttachment(
         sourcePath: sourceFile.path,
@@ -321,8 +418,21 @@ void main() {
     expect(relativePaths, isNot(contains('cache/manifest.json')));
     expect(relativePaths, contains('entries/entry_noodle_night.json'));
     expect(relativePaths, isNot(contains('sync/state.json')));
+    expect(relativePaths, isNot(contains('sync/onedrive_state.json')));
     expect(relativePaths, isNot(contains('sync/tombstones.json')));
   });
+
+  test('拒绝越界的远端同步路径', () async {
+    await expectLater(
+      storage.resolveSyncFileAbsolutePath('../profile.json'),
+      throwsA(isA<FileSystemException>()),
+    );
+    await expectLater(
+      storage.resolveSyncFileAbsolutePath('entries//bad.json'),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
+
   test(
     'purges expired dustbin entries after 7 days and creates tombstones',
     () async {
@@ -369,7 +479,7 @@ void main() {
       final sourceFile = File(
         '${tempDirectory.path}${Platform.pathSeparator}source_keep.jpg',
       );
-      await sourceFile.writeAsBytes(List<int>.filled(12, 5));
+      await sourceFile.writeAsBytes(_tinyPngBytes);
 
       final importedAttachment = await storage.importAttachment(
         sourcePath: sourceFile.path,
@@ -413,7 +523,7 @@ void main() {
     final sourceFile = File(
       '${tempDirectory.path}${Platform.pathSeparator}restore_source.jpg',
     );
-    await sourceFile.writeAsBytes(List<int>.filled(10, 2));
+    await sourceFile.writeAsBytes(_tinyPngBytes);
 
     final importedAttachment = await storage.importAttachment(
       sourcePath: sourceFile.path,

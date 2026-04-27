@@ -94,6 +94,23 @@ class OneDriveSyncConfig {
     };
   }
 
+  Map<String, dynamic> toStorageJson() {
+    return {
+      'client_id': clientId,
+      'tenant': tenant,
+      'remote_folder': remoteFolder,
+      'expires_at': expiresAt.toIso8601String(),
+      'sync_on_write': syncOnWrite,
+      'minimum_sync_interval_minutes': minimumSyncIntervalMinutes,
+      'max_destructive_actions': maxDestructiveActions,
+      'sync_originals': syncOriginals,
+      'download_originals': downloadOriginals,
+      'local_original_retention_days': localOriginalRetentionDays,
+      'account_name': accountName,
+      'account_email': accountEmail,
+    };
+  }
+
   factory OneDriveSyncConfig.fromJson(Map<String, dynamic> json) {
     int readInt(String key, int fallback) {
       final value = json[key];
@@ -110,8 +127,8 @@ class OneDriveSyncConfig {
       clientId: json['client_id'] as String,
       tenant: (json['tenant'] as String?) ?? 'consumers',
       remoteFolder: (json['remote_folder'] as String?) ?? 'love_diary',
-      accessToken: json['access_token'] as String,
-      refreshToken: json['refresh_token'] as String,
+      accessToken: json['access_token'] as String? ?? '',
+      refreshToken: json['refresh_token'] as String? ?? '',
       expiresAt: DateTime.parse(json['expires_at'] as String),
       syncOnWrite: (json['sync_on_write'] as bool?) ?? true,
       minimumSyncIntervalMinutes: readInt('minimum_sync_interval_minutes', 0),

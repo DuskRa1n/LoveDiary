@@ -11,10 +11,7 @@ class SyncConflictResolutionResult {
 }
 
 class SyncConflictPage extends StatefulWidget {
-  const SyncConflictPage({
-    super.key,
-    required this.conflictPaths,
-  });
+  const SyncConflictPage({super.key, required this.conflictPaths});
 
   final List<String> conflictPaths;
 
@@ -24,7 +21,8 @@ class SyncConflictPage extends StatefulWidget {
 
 class _SyncConflictPageState extends State<SyncConflictPage> {
   late final Map<String, SyncConflictResolutionChoice> _decisions = {
-    for (final path in widget.conflictPaths) path: SyncConflictResolutionChoice.keepLocal,
+    for (final path in widget.conflictPaths)
+      path: SyncConflictResolutionChoice.keepLocal,
   };
 
   void _applyToAll(SyncConflictResolutionChoice choice) {
@@ -36,9 +34,11 @@ class _SyncConflictPageState extends State<SyncConflictPage> {
   }
 
   void _submit() {
-    Navigator.of(
-      context,
-    ).pop(SyncConflictResolutionResult(decisions: Map<String, SyncConflictResolutionChoice>.from(_decisions)));
+    Navigator.of(context).pop(
+      SyncConflictResolutionResult(
+        decisions: Map<String, SyncConflictResolutionChoice>.from(_decisions),
+      ),
+    );
   }
 
   @override
@@ -53,16 +53,13 @@ class _SyncConflictPageState extends State<SyncConflictPage> {
             DiaryHero(
               eyebrow: '需要你确认',
               title: '发现 ${widget.conflictPaths.length} 个冲突',
-              subtitle: '这些文件在本地和坚果云上都被改过。你可以逐条决定采用哪一边。',
+              subtitle: '这些文件在本地和云端都被改过。你可以逐条决定采用哪一边。',
               footer: Wrap(
                 spacing: 10,
                 runSpacing: 10,
                 children: [
                   DiaryBadge(label: '支持逐条处理'),
-                  DiaryBadge(
-                    label: '不会自动覆盖',
-                    tone: DiaryBadgeTone.ink,
-                  ),
+                  DiaryBadge(label: '不会自动覆盖', tone: DiaryBadgeTone.ink),
                 ],
               ),
             ),
@@ -72,12 +69,14 @@ class _SyncConflictPageState extends State<SyncConflictPage> {
               runSpacing: 10,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => _applyToAll(SyncConflictResolutionChoice.keepLocal),
+                  onPressed: () =>
+                      _applyToAll(SyncConflictResolutionChoice.keepLocal),
                   icon: const Icon(Icons.upload_rounded),
                   label: const Text('全部保留本地'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: () => _applyToAll(SyncConflictResolutionChoice.useRemote),
+                  onPressed: () =>
+                      _applyToAll(SyncConflictResolutionChoice.useRemote),
                   icon: const Icon(Icons.cloud_download_rounded),
                   label: const Text('全部采用云端'),
                 ),
@@ -191,12 +190,14 @@ class _ConflictRow extends StatelessWidget {
             ChoiceChip(
               label: const Text('保留本地'),
               selected: choice == SyncConflictResolutionChoice.keepLocal,
-              onSelected: (_) => onChanged(SyncConflictResolutionChoice.keepLocal),
+              onSelected: (_) =>
+                  onChanged(SyncConflictResolutionChoice.keepLocal),
             ),
             ChoiceChip(
               label: const Text('采用云端'),
               selected: choice == SyncConflictResolutionChoice.useRemote,
-              onSelected: (_) => onChanged(SyncConflictResolutionChoice.useRemote),
+              onSelected: (_) =>
+                  onChanged(SyncConflictResolutionChoice.useRemote),
             ),
           ],
         ),

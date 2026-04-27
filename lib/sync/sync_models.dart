@@ -1,23 +1,62 @@
+enum SyncProvider {
+  oneDrive('onedrive');
+
+  const SyncProvider(this.id);
+
+  final String id;
+}
+
 class SyncState {
   const SyncState({
     required this.lastSyncedAt,
     required this.lastKnownRemoteCursor,
+    required this.lastKnownRemoteRootId,
     required this.lastKnownLocalFingerprints,
     required this.lastKnownRemoteRevisions,
+    this.lastKnownRemoteNodes = const {},
+    this.lastFailedAt,
+    this.lastFailureMessage,
   });
 
   final DateTime? lastSyncedAt;
   final String? lastKnownRemoteCursor;
+  final String? lastKnownRemoteRootId;
   final Map<String, String> lastKnownLocalFingerprints;
   final Map<String, String> lastKnownRemoteRevisions;
+  final Map<String, OneDriveRemoteNode> lastKnownRemoteNodes;
+  final DateTime? lastFailedAt;
+  final String? lastFailureMessage;
+
+  Map<String, RemoteSyncFile> get lastKnownRemoteFiles {
+    return {
+      for (final node in lastKnownRemoteNodes.values)
+        if (node.remoteFile != null) node.remoteFile!.relativePath: node.remoteFile!,
+    };
+  }
+
+  bool get hasCompleteRemoteNodeBaseline {
+    return (lastKnownRemoteRootId?.isNotEmpty ?? false) &&
+        lastKnownRemoteNodes.isNotEmpty;
+  }
+
+  bool get canUseDelta {
+    return hasCompleteRemoteNodeBaseline &&
+        (lastKnownRemoteCursor?.isNotEmpty ?? false);
+  }
 
   SyncState copyWith({
     DateTime? lastSyncedAt,
     String? lastKnownRemoteCursor,
+    String? lastKnownRemoteRootId,
     Map<String, String>? lastKnownLocalFingerprints,
     Map<String, String>? lastKnownRemoteRevisions,
+    Map<String, OneDriveRemoteNode>? lastKnownRemoteNodes,
+    DateTime? lastFailedAt,
+    String? lastFailureMessage,
     bool clearLastSyncedAt = false,
     bool clearLastKnownRemoteCursor = false,
+    bool clearLastKnownRemoteRootId = false,
+    bool clearLastFailure = false,
   }) {
     return SyncState(
       lastSyncedAt: clearLastSyncedAt
@@ -26,10 +65,19 @@ class SyncState {
       lastKnownRemoteCursor: clearLastKnownRemoteCursor
           ? null
           : lastKnownRemoteCursor ?? this.lastKnownRemoteCursor,
+      lastKnownRemoteRootId: clearLastKnownRemoteRootId
+          ? null
+          : lastKnownRemoteRootId ?? this.lastKnownRemoteRootId,
       lastKnownLocalFingerprints:
           lastKnownLocalFingerprints ?? this.lastKnownLocalFingerprints,
       lastKnownRemoteRevisions:
           lastKnownRemoteRevisions ?? this.lastKnownRemoteRevisions,
+      lastKnownRemoteNodes:
+          lastKnownRemoteNodes ?? this.lastKnownRemoteNodes,
+      lastFailedAt: clearLastFailure ? null : lastFailedAt ?? this.lastFailedAt,
+      lastFailureMessage: clearLastFailure
+          ? null
+          : lastFailureMessage ?? this.lastFailureMessage,
     );
   }
 
@@ -37,23 +85,42 @@ class SyncState {
     return {
       'last_synced_at': lastSyncedAt?.toIso8601String(),
       'last_known_remote_cursor': lastKnownRemoteCursor,
+      'last_known_remote_root_id': lastKnownRemoteRootId,
       'last_known_local_fingerprints': lastKnownLocalFingerprints,
       'last_known_remote_revisions': lastKnownRemoteRevisions,
+      'last_known_remote_nodes': {
+        for (final entry in lastKnownRemoteNodes.entries)
+          entry.key: entry.value.toJson(),
+      },
+      'last_failed_at': lastFailedAt?.toIso8601String(),
+      'last_failure_message': lastFailureMessage,
     };
   }
 
   factory SyncState.fromJson(Map<String, dynamic> json) {
+    final rawRemoteNodes = json['last_known_remote_nodes'] as Map? ?? const {};
     return SyncState(
       lastSyncedAt: json['last_synced_at'] == null
           ? null
           : DateTime.parse(json['last_synced_at'] as String),
       lastKnownRemoteCursor: json['last_known_remote_cursor'] as String?,
+      lastKnownRemoteRootId: json['last_known_remote_root_id'] as String?,
       lastKnownLocalFingerprints: Map<String, String>.from(
         json['last_known_local_fingerprints'] as Map? ?? const {},
       ),
       lastKnownRemoteRevisions: Map<String, String>.from(
         json['last_known_remote_revisions'] as Map? ?? const {},
       ),
+      lastKnownRemoteNodes: {
+        for (final entry in rawRemoteNodes.entries)
+          entry.key as String: OneDriveRemoteNode.fromJson(
+            Map<String, dynamic>.from(entry.value as Map),
+          ),
+      },
+      lastFailedAt: json['last_failed_at'] == null
+          ? null
+          : DateTime.parse(json['last_failed_at'] as String),
+      lastFailureMessage: json['last_failure_message'] as String?,
     );
   }
 
@@ -61,8 +128,10 @@ class SyncState {
     return const SyncState(
       lastSyncedAt: null,
       lastKnownRemoteCursor: null,
+      lastKnownRemoteRootId: null,
       lastKnownLocalFingerprints: {},
       lastKnownRemoteRevisions: {},
+      lastKnownRemoteNodes: {},
     );
   }
 }
@@ -122,13 +191,146 @@ class RemoteSyncFile {
   final DateTime modifiedAt;
   final int size;
   final bool isBinary;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'relative_path': relativePath,
+      'revision': revision,
+      'fingerprint': fingerprint,
+      'modified_at': modifiedAt.toIso8601String(),
+      'size': size,
+      'is_binary': isBinary,
+    };
+  }
+
+  factory RemoteSyncFile.fromJson(Map<String, dynamic> json) {
+    return RemoteSyncFile(
+      relativePath: json['relative_path'] as String,
+      revision: json['revision'] as String,
+      fingerprint: json['fingerprint'] as String,
+      modifiedAt: DateTime.parse(json['modified_at'] as String),
+      size: (json['size'] as num).toInt(),
+      isBinary: json['is_binary'] as bool,
+    );
+  }
+}
+
+class OneDriveRemoteNode {
+  const OneDriveRemoteNode({
+    required this.itemId,
+    required this.parentItemId,
+    required this.name,
+    required this.isFolder,
+    required this.relativePath,
+    this.revision,
+    this.fingerprint,
+    this.modifiedAt,
+    this.size,
+    this.isBinary,
+  });
+
+  final String itemId;
+  final String? parentItemId;
+  final String name;
+  final bool isFolder;
+  final String relativePath;
+  final String? revision;
+  final String? fingerprint;
+  final DateTime? modifiedAt;
+  final int? size;
+  final bool? isBinary;
+
+  RemoteSyncFile? get remoteFile {
+    if (isFolder ||
+        revision == null ||
+        fingerprint == null ||
+        modifiedAt == null ||
+        size == null ||
+        isBinary == null) {
+      return null;
+    }
+    return RemoteSyncFile(
+      relativePath: relativePath,
+      revision: revision!,
+      fingerprint: fingerprint!,
+      modifiedAt: modifiedAt!,
+      size: size!,
+      isBinary: isBinary!,
+    );
+  }
+
+  OneDriveRemoteNode copyWith({
+    String? itemId,
+    String? parentItemId,
+    String? name,
+    bool? isFolder,
+    String? relativePath,
+    String? revision,
+    String? fingerprint,
+    DateTime? modifiedAt,
+    int? size,
+    bool? isBinary,
+    bool clearParentItemId = false,
+  }) {
+    return OneDriveRemoteNode(
+      itemId: itemId ?? this.itemId,
+      parentItemId: clearParentItemId ? null : parentItemId ?? this.parentItemId,
+      name: name ?? this.name,
+      isFolder: isFolder ?? this.isFolder,
+      relativePath: relativePath ?? this.relativePath,
+      revision: revision ?? this.revision,
+      fingerprint: fingerprint ?? this.fingerprint,
+      modifiedAt: modifiedAt ?? this.modifiedAt,
+      size: size ?? this.size,
+      isBinary: isBinary ?? this.isBinary,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'item_id': itemId,
+      'parent_item_id': parentItemId,
+      'name': name,
+      'is_folder': isFolder,
+      'relative_path': relativePath,
+      'revision': revision,
+      'fingerprint': fingerprint,
+      'modified_at': modifiedAt?.toIso8601String(),
+      'size': size,
+      'is_binary': isBinary,
+    };
+  }
+
+  factory OneDriveRemoteNode.fromJson(Map<String, dynamic> json) {
+    return OneDriveRemoteNode(
+      itemId: json['item_id'] as String,
+      parentItemId: json['parent_item_id'] as String?,
+      name: json['name'] as String? ?? '',
+      isFolder: json['is_folder'] as bool? ?? false,
+      relativePath: json['relative_path'] as String? ?? '',
+      revision: json['revision'] as String?,
+      fingerprint: json['fingerprint'] as String?,
+      modifiedAt: json['modified_at'] == null
+          ? null
+          : DateTime.parse(json['modified_at'] as String),
+      size: (json['size'] as num?)?.toInt(),
+      isBinary: json['is_binary'] as bool?,
+    );
+  }
 }
 
 class RemoteSyncSnapshot {
-  const RemoteSyncSnapshot({required this.cursor, required this.files});
+  const RemoteSyncSnapshot({
+    required this.cursor,
+    required this.files,
+    this.remoteRootId,
+    this.remoteNodes = const {},
+  });
 
   final String? cursor;
   final List<RemoteSyncFile> files;
+  final String? remoteRootId;
+  final Map<String, OneDriveRemoteNode> remoteNodes;
 }
 
 class AttachmentSyncPolicy {

@@ -13,7 +13,10 @@ class FakeRemoteSource implements DiarySyncRemoteSource {
   final RemoteSyncSnapshot snapshot;
 
   @override
-  Future<RemoteSyncSnapshot> fetchSnapshot() async {
+  Future<RemoteSyncSnapshot> fetchSnapshot({
+    SyncState? baseline,
+    SyncProgressCallback? onProgress,
+  }) async {
     return snapshot;
   }
 
@@ -76,6 +79,7 @@ void main() {
       SyncState(
         lastSyncedAt: DateTime(2026, 4, 9, 9, 30),
         lastKnownRemoteCursor: 'cursor_1',
+        lastKnownRemoteRootId: 'root_1',
         lastKnownLocalFingerprints: {
           'entries/entry_delete_with_empty_snapshot.json':
               localFile.fingerprint,
@@ -83,19 +87,38 @@ void main() {
         lastKnownRemoteRevisions: const {
           'entries/entry_delete_with_empty_snapshot.json': 'rev_delete_empty_1',
         },
+        lastKnownRemoteNodes: {
+          'root_1': const OneDriveRemoteNode(
+            itemId: 'root_1',
+            parentItemId: null,
+            name: 'love_diary',
+            isFolder: true,
+            relativePath: '',
+          ),
+          'file_1': OneDriveRemoteNode(
+            itemId: 'file_1',
+            parentItemId: 'root_1',
+            name: 'entry_delete_with_empty_snapshot.json',
+            isFolder: false,
+            relativePath: 'entries/entry_delete_with_empty_snapshot.json',
+            revision: 'rev_delete_empty_1',
+            fingerprint: localFile.fingerprint,
+            modifiedAt: localFile.modifiedAt,
+            size: localFile.size,
+            isBinary: false,
+          ),
+        },
       ),
     );
 
     await storage.deleteEntry(entry);
-    await storage.permanentlyDeleteDeletedEntry(
-      (await storage.loadDustbinEntries()).single,
-    );
 
     final service = DiarySyncService(
       storage: storage,
       remoteSource: FakeRemoteSource(
         const RemoteSyncSnapshot(cursor: null, files: []),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();
@@ -108,6 +131,48 @@ void main() {
     );
     expect(plan.actions.single.reason, 'local_deleted_using_remote_baseline');
   });
+
+  test(
+    'ignores legacy cursor without a complete remote node baseline',
+    () async {
+      await storage.saveProfile(
+        CoupleProfile(
+          maleName: '我',
+          femaleName: '她',
+          togetherSince: DateTime(2025, 2, 6),
+          isOnboarded: true,
+        ),
+      );
+
+      final localFile = (await storage.listSyncFiles()).singleWhere(
+        (file) => file.relativePath == 'profile.json',
+      );
+      await storage.saveSyncState(
+        SyncState(
+          lastSyncedAt: DateTime(2026, 4, 9, 9, 0),
+          lastKnownRemoteCursor: 'legacy_cursor',
+          lastKnownRemoteRootId: null,
+          lastKnownLocalFingerprints: {'profile.json': localFile.fingerprint},
+          lastKnownRemoteRevisions: const {'profile.json': 'legacy_remote_rev'},
+        ),
+      );
+
+      final service = DiarySyncService(
+        storage: storage,
+        remoteSource: FakeRemoteSource(
+          const RemoteSyncSnapshot(cursor: null, files: []),
+        ),
+        provider: SyncProvider.oneDrive,
+      );
+
+      final plan = await service.buildPlan();
+
+      expect(plan.actions, hasLength(1));
+      expect(plan.actions.single.type, SyncActionType.upload);
+      expect(plan.actions.single.relativePath, 'profile.json');
+    },
+  );
+
   test('远端为空时会把本地文件标记为上传', () async {
     await storage.saveProfile(
       CoupleProfile(
@@ -124,6 +189,7 @@ void main() {
       remoteSource: FakeRemoteSource(
         const RemoteSyncSnapshot(cursor: null, files: []),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();
@@ -154,6 +220,7 @@ void main() {
           ],
         ),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();
@@ -179,11 +246,33 @@ void main() {
     );
 
     await storage.saveSyncState(
-      const SyncState(
+      SyncState(
         lastSyncedAt: null,
         lastKnownRemoteCursor: 'cursor_0',
+        lastKnownRemoteRootId: 'root_profile',
         lastKnownLocalFingerprints: {'profile.json': 'old_local'},
         lastKnownRemoteRevisions: {'profile.json': 'old_remote'},
+        lastKnownRemoteNodes: {
+          'root_profile': OneDriveRemoteNode(
+            itemId: 'root_profile',
+            parentItemId: null,
+            name: 'love_diary',
+            isFolder: true,
+            relativePath: '',
+          ),
+          'profile_file': OneDriveRemoteNode(
+            itemId: 'profile_file',
+            parentItemId: 'root_profile',
+            name: 'profile.json',
+            isFolder: false,
+            relativePath: 'profile.json',
+            revision: 'old_remote',
+            fingerprint: 'old_remote',
+            modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            size: 0,
+            isBinary: false,
+          ),
+        },
       ),
     );
 
@@ -204,6 +293,7 @@ void main() {
           ],
         ),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();
@@ -234,19 +324,38 @@ void main() {
       SyncState(
         lastSyncedAt: DateTime(2026, 4, 9, 9, 0),
         lastKnownRemoteCursor: 'cursor_0',
+        lastKnownRemoteRootId: 'root_delete',
         lastKnownLocalFingerprints: {
           'entries/entry_delete_sync.json': localFile.fingerprint,
         },
         lastKnownRemoteRevisions: const {
           'entries/entry_delete_sync.json': 'rev_delete_1',
         },
+        lastKnownRemoteNodes: {
+          'root_delete': const OneDriveRemoteNode(
+            itemId: 'root_delete',
+            parentItemId: null,
+            name: 'love_diary',
+            isFolder: true,
+            relativePath: '',
+          ),
+          'delete_file': OneDriveRemoteNode(
+            itemId: 'delete_file',
+            parentItemId: 'root_delete',
+            name: 'entry_delete_sync.json',
+            isFolder: false,
+            relativePath: 'entries/entry_delete_sync.json',
+            revision: 'rev_delete_1',
+            fingerprint: localFile.fingerprint,
+            modifiedAt: localFile.modifiedAt,
+            size: localFile.size,
+            isBinary: false,
+          ),
+        },
       ),
     );
 
     await storage.deleteEntry(entry);
-    await storage.permanentlyDeleteDeletedEntry(
-      (await storage.loadDustbinEntries()).single,
-    );
 
     final service = DiarySyncService(
       storage: storage,
@@ -265,6 +374,7 @@ void main() {
           ],
         ),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();
@@ -299,6 +409,7 @@ void main() {
       remoteSource: FakeRemoteSource(
         const RemoteSyncSnapshot(cursor: null, files: []),
       ),
+      provider: SyncProvider.oneDrive,
     );
 
     final plan = await service.buildPlan();

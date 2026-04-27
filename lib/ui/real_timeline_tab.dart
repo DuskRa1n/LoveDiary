@@ -8,6 +8,8 @@ class RealTimelineTab extends StatefulWidget {
     super.key,
     required this.entries,
     required this.rootDirectoryPath,
+    required this.isWriteLocked,
+    required this.onWriteBlocked,
     required this.onOpenEntry,
     required this.onEditEntry,
     required this.onDeleteEntry,
@@ -15,6 +17,8 @@ class RealTimelineTab extends StatefulWidget {
 
   final List<DiaryEntry> entries;
   final String? rootDirectoryPath;
+  final bool isWriteLocked;
+  final VoidCallback onWriteBlocked;
   final ValueChanged<DiaryEntry> onOpenEntry;
   final Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry;
   final Future<void> Function(DiaryEntry entry) onDeleteEntry;
@@ -63,6 +67,11 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
   }
 
   Future<void> _confirmDelete(DiaryEntry entry) async {
+    if (widget.isWriteLocked) {
+      widget.onWriteBlocked();
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -100,8 +109,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
           query.isEmpty ||
           entry.title.toLowerCase().contains(query) ||
           entry.content.toLowerCase().contains(query);
-      final matchesMood =
-          _selectedMood == null || entry.mood == _selectedMood;
+      final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
       final matchesDate =
           _selectedDate == null ||
           isSameDiaryDay(entry.createdAt, _selectedDate!);
@@ -111,6 +119,8 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
         query.isNotEmpty || _selectedMood != null || _selectedDate != null;
 
     return DiaryPage(
+      showBackground: false,
+      respectTopSafeArea: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -124,10 +134,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
               children: [
                 DiaryBadge(label: '${widget.entries.length} 篇'),
                 if (_selectedMood != null)
-                  DiaryBadge(
-                    label: _selectedMood!,
-                    tone: DiaryBadgeTone.sand,
-                  ),
+                  DiaryBadge(label: _selectedMood!, tone: DiaryBadgeTone.sand),
                 if (_selectedDate != null)
                   DiaryBadge(
                     label: formatDiaryDate(_selectedDate!),
@@ -161,10 +168,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
           ),
           const SizedBox(height: 14),
           if (widget.entries.isEmpty)
-            const DiaryEmptyState(
-              title: '还没有日记',
-              subtitle: '第一篇写下后，时间线会从这里开始。',
-            )
+            const DiaryEmptyState(title: '还没有日记', subtitle: '第一篇写下后，时间线会从这里开始。')
           else if (filteredEntries.isEmpty)
             const DiaryEmptyState(
               title: '没有匹配结果',
@@ -178,7 +182,13 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
                 isFirst: item.key == 0,
                 isLast: item.key == filteredEntries.length - 1,
                 onTap: () => widget.onOpenEntry(item.value),
-                onEdit: () => widget.onEditEntry(item.value),
+                onEdit: () {
+                  if (widget.isWriteLocked) {
+                    widget.onWriteBlocked();
+                    return;
+                  }
+                  widget.onEditEntry(item.value);
+                },
                 onDelete: () => _confirmDelete(item.value),
               ),
             ),
@@ -232,7 +242,7 @@ class _TimelineFilterPanel extends StatelessWidget {
                         },
                         icon: const Icon(Icons.close_rounded),
                       ),
-            ),
+              ),
               onChanged: (_) => onQueryChanged(),
             ),
           ),
@@ -262,9 +272,9 @@ class _TimelineFilterPanel extends StatelessWidget {
                 Text(
                   '筛选日记',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: DiaryPalette.ink,
-                        fontWeight: FontWeight.w900,
-                      ),
+                    color: DiaryPalette.ink,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Wrap(
@@ -418,21 +428,19 @@ class _TimelineRail extends StatelessWidget {
                   children: [
                     Text(
                       '${date.day}',
-                      style:
-                          Theme.of(context).textTheme.titleLarge?.copyWith(
-                                color: DiaryPalette.rose,
-                                fontWeight: FontWeight.w900,
-                                height: 0.95,
-                              ),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: DiaryPalette.rose,
+                        fontWeight: FontWeight.w900,
+                        height: 0.95,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       '${date.month}月',
-                      style:
-                          Theme.of(context).textTheme.labelMedium?.copyWith(
-                                color: DiaryPalette.wine,
-                                fontWeight: FontWeight.w800,
-                              ),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: DiaryPalette.wine,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ],
                 ),
@@ -441,9 +449,9 @@ class _TimelineRail extends StatelessWidget {
               Text(
                 '${date.year}',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: DiaryPalette.wine,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  color: DiaryPalette.wine,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ],
           ),
@@ -514,10 +522,7 @@ class _TimelineEntryCard extends StatelessWidget {
                     onDelete();
                   },
                   itemBuilder: (context) => const [
-                    PopupMenuItem(
-                      value: _EntryAction.edit,
-                      child: Text('编辑'),
-                    ),
+                    PopupMenuItem(value: _EntryAction.edit, child: Text('编辑')),
                     PopupMenuItem(
                       value: _EntryAction.delete,
                       child: Text('删除'),
