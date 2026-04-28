@@ -123,6 +123,109 @@ void main() {
     );
   });
 
+  test('本机视角不会写入可同步的 profile.json', () async {
+    await storage.saveProfile(
+      CoupleProfile(
+        maleName: '男方',
+        femaleName: '女方',
+        currentUserRole: 'female',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+    );
+
+    final profileFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}profile.json',
+    );
+    final localSettingsFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}local_settings.json',
+    );
+    final profileJson =
+        jsonDecode(await profileFile.readAsString()) as Map<String, dynamic>;
+    final localJson =
+        jsonDecode(await localSettingsFile.readAsString())
+            as Map<String, dynamic>;
+
+    expect(profileJson.containsKey('current_user_role'), isFalse);
+    expect(localJson['current_user_role'], 'female');
+    expect((await storage.loadProfile()).currentUserRole, 'female');
+
+    final relativePaths = (await storage.listSyncFiles())
+        .map((file) => file.relativePath)
+        .toList();
+    expect(relativePaths, contains('profile.json'));
+    expect(relativePaths, isNot(contains('local_settings.json')));
+  });
+
+  test('旧版 profile 中的视角会迁移成本机私有设置', () async {
+    final profileFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}profile.json',
+    );
+    await profileFile.writeAsString(
+      jsonEncode({
+        'male_name': '男方',
+        'female_name': '女方',
+        'current_user_role': 'female',
+        'together_since': DateTime(2025, 2, 6).toIso8601String(),
+        'is_onboarded': true,
+      }),
+    );
+
+    final loadedProfile = await storage.loadProfile();
+    final sanitizedProfileJson =
+        jsonDecode(await profileFile.readAsString()) as Map<String, dynamic>;
+    final localSettingsFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}local_settings.json',
+    );
+    final localJson =
+        jsonDecode(await localSettingsFile.readAsString())
+            as Map<String, dynamic>;
+
+    expect(loadedProfile.currentUserRole, 'female');
+    expect(sanitizedProfileJson.containsKey('current_user_role'), isFalse);
+    expect(localJson['current_user_role'], 'female');
+  });
+
+  test('会保存、读取和删除日程', () async {
+    final schedule = ScheduleItem(
+      id: 'schedule_birthday',
+      title: '他的生日',
+      description: '准备礼物',
+      date: DateTime(2026, 5, 7),
+      type: ScheduleItemType.yearly,
+      createdAt: DateTime(2026, 4, 28, 12, 0),
+    );
+
+    final savedSchedule = await storage.saveSchedule(schedule);
+    final loadedSchedules = await storage.loadSchedules();
+
+    expect(savedSchedule.title, '他的生日');
+    expect(
+      File(
+        '${tempDirectory.path}${Platform.pathSeparator}schedules.json',
+      ).existsSync(),
+      isTrue,
+    );
+    expect(loadedSchedules, hasLength(1));
+    expect(loadedSchedules.single.type, ScheduleItemType.yearly);
+    expect(loadedSchedules.single.description, '准备礼物');
+
+    await storage.deleteSchedule(schedule);
+    expect(await storage.loadSchedules(), isEmpty);
+  });
+
+  test('日程标题不能超过 8 个字', () async {
+    final schedule = ScheduleItem(
+      id: 'schedule_long_title',
+      title: '这是一个过长的日程标题',
+      date: DateTime(2026, 5, 7),
+      type: ScheduleItemType.oneTime,
+      createdAt: DateTime(2026, 4, 28, 12, 0),
+    );
+
+    await expectLater(storage.saveSchedule(schedule), throwsFormatException);
+  });
+
   test('会持久化同步状态和 tombstones', () async {
     final state = SyncState(
       lastSyncedAt: DateTime(2026, 4, 9, 10, 0),
@@ -178,8 +281,14 @@ void main() {
 
     expect(configJson.containsKey('access_token'), isFalse);
     expect(configJson.containsKey('refresh_token'), isFalse);
-    expect(await secretStore.read('onedrive_access_token'), 'access_token_secret');
-    expect(await secretStore.read('onedrive_refresh_token'), 'refresh_token_secret');
+    expect(
+      await secretStore.read('onedrive_access_token'),
+      'access_token_secret',
+    );
+    expect(
+      await secretStore.read('onedrive_refresh_token'),
+      'refresh_token_secret',
+    );
     expect(loadedConfig?.accessToken, 'access_token_secret');
     expect(loadedConfig?.refreshToken, 'refresh_token_secret');
   });
@@ -430,6 +539,66 @@ void main() {
     await expectLater(
       storage.resolveSyncFileAbsolutePath('entries//bad.json'),
       throwsA(isA<FileSystemException>()),
+    );
+    await expectLater(
+      storage.resolveSyncFileAbsolutePath('local_settings.json'),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
+
+  test('远端日记 JSON 内部的危险 id 和附件路径会被清理', () async {
+    final entriesDirectory = Directory(
+      '${tempDirectory.path}${Platform.pathSeparator}entries',
+    );
+    await entriesDirectory.create(recursive: true);
+    final entryFile = File(
+      '${entriesDirectory.path}${Platform.pathSeparator}entry_safe.json',
+    );
+    await entryFile.writeAsString(
+      jsonEncode({
+        'id': '../profile',
+        'author': '他',
+        'title': '远端坏数据',
+        'content': '这条数据的内部路径不可信。',
+        'mood': '警觉',
+        'created_at': DateTime(2026, 4, 9, 10, 0).toIso8601String(),
+        'comments': [],
+        'attachments': [
+          {
+            'id': '../evil',
+            'path': '../profile.json',
+            'original_name': 'evil.jpg',
+            'created_at': DateTime(2026, 4, 9, 10, 1).toIso8601String(),
+            'has_local_original': true,
+          },
+          {
+            'id': 'att_safe',
+            'path': 'attachments/entry_safe/previews/att_safe.png',
+            'original_path': 'attachments/entry_safe/originals/att_safe.jpg',
+            'original_name': 'safe.jpg',
+            'created_at': DateTime(2026, 4, 9, 10, 2).toIso8601String(),
+            'has_local_original': true,
+          },
+        ],
+      }),
+    );
+
+    final entries = await storage.loadEntries();
+    final rewrittenJson =
+        jsonDecode(await entryFile.readAsString()) as Map<String, dynamic>;
+    final rewrittenAttachments = rewrittenJson['attachments'] as List<dynamic>;
+
+    expect(entries, hasLength(1));
+    expect(entries.single.id, 'entry_safe');
+    expect(entries.single.attachments, hasLength(1));
+    expect(entries.single.attachments.single.id, 'att_safe');
+    expect(entries.single.attachments.single.hasLocalOriginal, isFalse);
+    expect(rewrittenJson['id'], 'entry_safe');
+    expect(
+      (rewrittenAttachments.single as Map<String, dynamic>).containsKey(
+        'has_local_original',
+      ),
+      isFalse,
     );
   });
 

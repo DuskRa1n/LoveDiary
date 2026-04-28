@@ -10,12 +10,17 @@ import 'package:love_diary/sync/sync_models.dart';
 import 'package:love_diary/ui/real_timeline_tab.dart';
 
 class FakeDiaryStorage extends DiaryStorage {
-  FakeDiaryStorage({required CoupleProfile profile, List<DiaryEntry>? entries})
-    : _profile = profile,
-      _entries = List<DiaryEntry>.from(entries ?? const []);
+  FakeDiaryStorage({
+    required CoupleProfile profile,
+    List<DiaryEntry>? entries,
+    List<ScheduleItem>? schedules,
+  }) : _profile = profile,
+       _entries = List<DiaryEntry>.from(entries ?? const []),
+       _schedules = List<ScheduleItem>.from(schedules ?? const []);
 
   CoupleProfile _profile;
   List<DiaryEntry> _entries;
+  List<ScheduleItem> _schedules;
   DiaryDraft? _draft;
 
   @override
@@ -52,6 +57,32 @@ class FakeDiaryStorage extends DiaryStorage {
   @override
   Future<void> saveProfile(CoupleProfile profile) async {
     _profile = profile;
+  }
+
+  @override
+  Future<List<ScheduleItem>> loadSchedules() async {
+    return List<ScheduleItem>.from(_schedules);
+  }
+
+  @override
+  Future<void> saveSchedules(List<ScheduleItem> schedules) async {
+    _schedules = List<ScheduleItem>.from(schedules);
+  }
+
+  @override
+  Future<ScheduleItem> saveSchedule(ScheduleItem schedule) async {
+    final index = _schedules.indexWhere((item) => item.id == schedule.id);
+    if (index == -1) {
+      _schedules = [schedule, ..._schedules];
+    } else {
+      _schedules[index] = schedule;
+    }
+    return schedule;
+  }
+
+  @override
+  Future<void> deleteSchedule(ScheduleItem schedule) async {
+    _schedules = _schedules.where((item) => item.id != schedule.id).toList();
   }
 
   @override
@@ -116,6 +147,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
+  Future<void> openActionMenu(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.add_rounded).last);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('tapping an attachment opens the preview page', (
     WidgetTester tester,
   ) async {
@@ -160,7 +196,9 @@ void main() {
     expect(find.text('今天'), findsOneWidget);
     expect(find.text('回忆'), findsOneWidget);
     expect(find.text('我们'), findsOneWidget);
+    await openActionMenu(tester);
     expect(find.text('写日记'), findsOneWidget);
+    expect(find.text('添加日程'), findsOneWidget);
   });
 
   testWidgets('点击写日记会打开创建页', (WidgetTester tester) async {
@@ -176,6 +214,7 @@ void main() {
 
     await pumpApp(tester, storage);
 
+    await openActionMenu(tester);
     await tester.tap(find.text('写日记'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -184,6 +223,85 @@ void main() {
     expect(find.text('标题（可选）'), findsOneWidget);
     expect(find.text('内容'), findsOneWidget);
     expect(find.text('状态'), findsOneWidget);
+  });
+
+  testWidgets('点击加号会展开并可点击空白处收起操作菜单', (WidgetTester tester) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: DiaryStorage.seedEntries(),
+    );
+
+    await pumpApp(tester, storage);
+    await openActionMenu(tester);
+
+    expect(find.text('添加日程'), findsOneWidget);
+    expect(find.text('连接'), findsOneWidget);
+    expect(find.text('写日记'), findsOneWidget);
+
+    await tester.tapAt(const Offset(24, 220));
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加日程'), findsNothing);
+  });
+
+  testWidgets('点击添加日程会打开日程编辑页', (WidgetTester tester) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: DiaryStorage.seedEntries(),
+    );
+
+    await pumpApp(tester, storage);
+    await openActionMenu(tester);
+    await tester.tap(find.text('添加日程'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加日程'), findsWidgets);
+    expect(find.text('标题'), findsOneWidget);
+    expect(find.text('单次行程'), findsWidgets);
+  });
+
+  testWidgets('首页会展示临近日程并可从热力图进入日程表', (WidgetTester tester) async {
+    final today = DateTime.now();
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: DiaryStorage.seedEntries(),
+      schedules: [
+        ScheduleItem(
+          id: 'schedule_today',
+          title: '生日',
+          date: today,
+          type: ScheduleItemType.yearly,
+          createdAt: today,
+        ),
+      ],
+    );
+
+    await pumpApp(tester, storage);
+
+    expect(find.text('生日·今天'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -180));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('${today.day}').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('日程表'), findsOneWidget);
+    expect(find.text('生日'), findsWidgets);
   });
 
   testWidgets('点击时间线日记会进入详情页', (WidgetTester tester) async {
@@ -276,6 +394,7 @@ void main() {
 
     await pumpApp(tester, storage);
 
+    await openActionMenu(tester);
     await tester.tap(find.text('写日记'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField).at(1), '这是还没保存的内容');

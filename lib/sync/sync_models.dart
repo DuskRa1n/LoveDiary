@@ -30,7 +30,8 @@ class SyncState {
   Map<String, RemoteSyncFile> get lastKnownRemoteFiles {
     return {
       for (final node in lastKnownRemoteNodes.values)
-        if (node.remoteFile != null) node.remoteFile!.relativePath: node.remoteFile!,
+        if (node.remoteFile != null)
+          node.remoteFile!.relativePath: node.remoteFile!,
     };
   }
 
@@ -72,8 +73,7 @@ class SyncState {
           lastKnownLocalFingerprints ?? this.lastKnownLocalFingerprints,
       lastKnownRemoteRevisions:
           lastKnownRemoteRevisions ?? this.lastKnownRemoteRevisions,
-      lastKnownRemoteNodes:
-          lastKnownRemoteNodes ?? this.lastKnownRemoteNodes,
+      lastKnownRemoteNodes: lastKnownRemoteNodes ?? this.lastKnownRemoteNodes,
       lastFailedAt: clearLastFailure ? null : lastFailedAt ?? this.lastFailedAt,
       lastFailureMessage: clearLastFailure
           ? null
@@ -274,7 +274,9 @@ class OneDriveRemoteNode {
   }) {
     return OneDriveRemoteNode(
       itemId: itemId ?? this.itemId,
-      parentItemId: clearParentItemId ? null : parentItemId ?? this.parentItemId,
+      parentItemId: clearParentItemId
+          ? null
+          : parentItemId ?? this.parentItemId,
       name: name ?? this.name,
       isFolder: isFolder ?? this.isFolder,
       relativePath: relativePath ?? this.relativePath,
@@ -333,6 +335,117 @@ class RemoteSyncSnapshot {
   final Map<String, OneDriveRemoteNode> remoteNodes;
 }
 
+class SyncFilePolicy {
+  const SyncFilePolicy._();
+
+  static const profilePath = 'profile.json';
+  static const schedulesPath = 'schedules.json';
+  static const entriesDirectory = 'entries';
+  static const attachmentsDirectory = 'attachments';
+  static const originalAttachmentRole = 'originals';
+
+  static final RegExp _safeIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,96}$');
+
+  static bool isSyncableBusinessPath(String relativePath) {
+    try {
+      normalizeSyncableBusinessPath(relativePath);
+      return true;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  static String normalizeSyncableBusinessPath(String relativePath) {
+    final normalized = normalizeRelativePath(relativePath, allowEmpty: false);
+    if (normalized == profilePath || normalized == schedulesPath) {
+      return normalized;
+    }
+
+    final segments = normalized.split('/');
+    if (_isEntryPath(segments) || _isAttachmentPath(segments)) {
+      return normalized;
+    }
+
+    throw FormatException('Refusing non-sync business path: $relativePath');
+  }
+
+  static String normalizeRelativePath(
+    String relativePath, {
+    bool allowEmpty = true,
+  }) {
+    final normalized = relativePath.replaceAll('\\', '/').trim();
+    if (normalized.isEmpty) {
+      if (allowEmpty) {
+        return '';
+      }
+      throw const FormatException('Sync path must not be empty.');
+    }
+    if (_isAbsolutePath(normalized)) {
+      throw FormatException('Refusing absolute sync path: $normalized');
+    }
+
+    final segments = normalized.split('/');
+    if (segments.any(
+      (segment) => segment.isEmpty || segment == '.' || segment == '..',
+    )) {
+      throw FormatException('Refusing unsafe sync path: $normalized');
+    }
+    return segments.join('/');
+  }
+
+  static bool isSafeId(String value) {
+    return _safeIdPattern.hasMatch(value);
+  }
+
+  static bool isOriginalAttachmentPath(String relativePath) {
+    try {
+      final normalized = normalizeRelativePath(relativePath, allowEmpty: false);
+      final segments = normalized.split('/');
+      return segments.length == 4 &&
+          segments[0] == attachmentsDirectory &&
+          segments[2] == originalAttachmentRole;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  static bool _isEntryPath(List<String> segments) {
+    if (segments.length != 2 || segments[0] != entriesDirectory) {
+      return false;
+    }
+    final fileName = segments[1];
+    if (!fileName.endsWith('.json')) {
+      return false;
+    }
+    final entryId = fileName.substring(0, fileName.length - 5);
+    return isSafeId(entryId);
+  }
+
+  static bool _isAttachmentPath(List<String> segments) {
+    if (segments.length != 3 && segments.length != 4) {
+      return false;
+    }
+    if (segments[0] != attachmentsDirectory || !isSafeId(segments[1])) {
+      return false;
+    }
+    if (segments.length == 4) {
+      const roles = {'thumbnails', 'previews', originalAttachmentRole};
+      if (!roles.contains(segments[2])) {
+        return false;
+      }
+    }
+
+    final fileName = segments.last;
+    return fileName.isNotEmpty && fileName != '.' && fileName != '..';
+  }
+
+  static bool _isAbsolutePath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    return normalized.startsWith('/') ||
+        RegExp(r'^[a-zA-Z]:/').hasMatch(normalized);
+  }
+}
+
 class AttachmentSyncPolicy {
   const AttachmentSyncPolicy({
     this.syncOriginals = false,
@@ -343,21 +456,21 @@ class AttachmentSyncPolicy {
   final bool downloadOriginals;
 
   bool includeLocalPath(String relativePath) {
-    return !_isOriginalAttachmentPath(relativePath) || syncOriginals;
+    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
+        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
+            syncOriginals);
   }
 
   bool includeRemotePath(String relativePath) {
-    return !_isOriginalAttachmentPath(relativePath) || downloadOriginals;
+    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
+        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
+            downloadOriginals);
   }
 
   bool includeTombstonePath(String relativePath) {
-    return !_isOriginalAttachmentPath(relativePath) || syncOriginals;
-  }
-
-  bool _isOriginalAttachmentPath(String relativePath) {
-    final normalized = relativePath.replaceAll('\\', '/');
-    return normalized.startsWith('attachments/') &&
-        normalized.contains('/originals/');
+    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
+        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
+            syncOriginals);
   }
 }
 

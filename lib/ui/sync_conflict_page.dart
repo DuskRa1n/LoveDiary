@@ -50,10 +50,9 @@ class _SyncConflictPageState extends State<SyncConflictPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DiaryHero(
+            DiaryCompactHeader(
               eyebrow: '需要你确认',
               title: '发现 ${widget.conflictPaths.length} 个冲突',
-              subtitle: '这些文件在本地和云端都被改过。你可以逐条决定采用哪一边。',
               footer: Wrap(
                 spacing: 10,
                 runSpacing: 10,

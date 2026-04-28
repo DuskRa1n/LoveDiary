@@ -188,6 +188,10 @@ class DiarySyncService {
     required LocalSyncFile localFile,
     required RemoteSyncFile remoteFile,
   }) {
+    if (localFile.fingerprint == remoteFile.fingerprint) {
+      return null;
+    }
+
     final sameSize = localFile.size == remoteFile.size;
     final sameType = localFile.isBinary == remoteFile.isBinary;
     final modifiedDelta = localFile.modifiedAt
@@ -196,7 +200,11 @@ class DiarySyncService {
         .abs();
 
     if (sameSize && sameType && modifiedDelta <= 2) {
-      return null;
+      return SyncAction(
+        type: SyncActionType.conflict,
+        relativePath: path,
+        reason: 'initial_sync_unverified_same_timestamp',
+      );
     }
 
     if (remoteFile.modifiedAt.isAfter(localFile.modifiedAt)) {

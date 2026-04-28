@@ -13,6 +13,7 @@ class RealTimelineTab extends StatefulWidget {
     required this.onOpenEntry,
     required this.onEditEntry,
     required this.onDeleteEntry,
+    this.topContentInset = 0,
   });
 
   final List<DiaryEntry> entries;
@@ -22,6 +23,7 @@ class RealTimelineTab extends StatefulWidget {
   final ValueChanged<DiaryEntry> onOpenEntry;
   final Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry;
   final Future<void> Function(DiaryEntry entry) onDeleteEntry;
+  final double topContentInset;
 
   @override
   State<RealTimelineTab> createState() => _RealTimelineTabState();
@@ -118,82 +120,95 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
     final hasFilter =
         query.isNotEmpty || _selectedMood != null || _selectedDate != null;
 
-    return DiaryPage(
-      showBackground: false,
-      respectTopSafeArea: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final effectivePadding = const EdgeInsets.fromLTRB(18, 14, 18, 112)
+        .copyWith(
+          top: 14 + MediaQuery.paddingOf(context).top + widget.topContentInset,
+        );
+    final header = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DiaryHero(
+          eyebrow: '回忆',
+          title: '时光轴',
+          footer: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              DiaryBadge(label: '${widget.entries.length} 篇'),
+              if (_selectedMood != null)
+                DiaryBadge(label: _selectedMood!, tone: DiaryBadgeTone.sand),
+              if (_selectedDate != null)
+                DiaryBadge(
+                  label: formatDiaryDate(_selectedDate!),
+                  tone: DiaryBadgeTone.ink,
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
+        _TimelineFilterPanel(
+          controller: _searchController,
+          moods: moods,
+          selectedMood: _selectedMood,
+          selectedDate: _selectedDate,
+          hasFilter: hasFilter,
+          onQueryChanged: () => setState(() {}),
+          onMoodSelected: (mood) {
+            setState(() {
+              _selectedMood = mood;
+            });
+          },
+          onPickDate: _pickDate,
+          onClear: _clearFilters,
+        ),
+        const SizedBox(height: 24),
+        DiarySectionHeader(title: hasFilter ? '筛选结果' : '日记目录'),
+        const SizedBox(height: 14),
+      ],
+    );
+
+    if (widget.entries.isEmpty || filteredEntries.isEmpty) {
+      return ListView(
+        padding: effectivePadding,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          DiaryHero(
-            eyebrow: '回忆',
-            title: '时光轴',
-            subtitle: '所有日记',
-            footer: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                DiaryBadge(label: '${widget.entries.length} 篇'),
-                if (_selectedMood != null)
-                  DiaryBadge(label: _selectedMood!, tone: DiaryBadgeTone.sand),
-                if (_selectedDate != null)
-                  DiaryBadge(
-                    label: formatDiaryDate(_selectedDate!),
-                    tone: DiaryBadgeTone.ink,
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 22),
-          _TimelineFilterPanel(
-            controller: _searchController,
-            moods: moods,
-            selectedMood: _selectedMood,
-            selectedDate: _selectedDate,
-            hasFilter: hasFilter,
-            onQueryChanged: () => setState(() {}),
-            onMoodSelected: (mood) {
-              setState(() {
-                _selectedMood = mood;
-              });
-            },
-            onPickDate: _pickDate,
-            onClear: _clearFilters,
-          ),
-          const SizedBox(height: 24),
-          DiarySectionHeader(
-            title: hasFilter ? '筛选结果' : '日记目录',
-            subtitle: hasFilter
-                ? '找到 ${filteredEntries.length} 篇符合条件的记录。'
-                : '最近写下的内容排在最前面。',
-          ),
-          const SizedBox(height: 14),
+          header,
           if (widget.entries.isEmpty)
-            const DiaryEmptyState(title: '还没有日记', subtitle: '第一篇写下后，时间线会从这里开始。')
-          else if (filteredEntries.isEmpty)
-            const DiaryEmptyState(
-              title: '没有匹配结果',
-              subtitle: '换一个关键词，或者清空筛选后再看。',
-            )
+            const DiaryEmptyState(title: '还没有日记')
           else
-            ...filteredEntries.asMap().entries.map(
-              (item) => _TimelineEntryRow(
-                entry: item.value,
-                rootDirectoryPath: widget.rootDirectoryPath,
-                isFirst: item.key == 0,
-                isLast: item.key == filteredEntries.length - 1,
-                onTap: () => widget.onOpenEntry(item.value),
-                onEdit: () {
-                  if (widget.isWriteLocked) {
-                    widget.onWriteBlocked();
-                    return;
-                  }
-                  widget.onEditEntry(item.value);
-                },
-                onDelete: () => _confirmDelete(item.value),
-              ),
-            ),
+            const DiaryEmptyState(title: '没有匹配结果'),
         ],
-      ),
+      );
+    }
+
+    return ListView.builder(
+      padding: effectivePadding,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      cacheExtent: 900,
+      itemCount: filteredEntries.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return header;
+        }
+
+        final entryIndex = index - 1;
+        final entry = filteredEntries[entryIndex];
+        return _TimelineEntryRow(
+          entry: entry,
+          rootDirectoryPath: widget.rootDirectoryPath,
+          isFirst: entryIndex == 0,
+          isLast: entryIndex == filteredEntries.length - 1,
+          onTap: () => widget.onOpenEntry(entry),
+          onEdit: () {
+            if (widget.isWriteLocked) {
+              widget.onWriteBlocked();
+              return;
+            }
+            widget.onEditEntry(entry);
+          },
+          onDelete: () => _confirmDelete(entry),
+        );
+      },
     );
   }
 }

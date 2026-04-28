@@ -8,12 +8,18 @@ class RealTodayTab extends StatelessWidget {
     super.key,
     required this.profile,
     required this.entries,
+    required this.schedules,
     required this.startupQuote,
+    required this.onOpenSchedules,
+    this.topContentInset = 0,
   });
 
   final CoupleProfile profile;
   final List<DiaryEntry> entries;
+  final List<ScheduleItem> schedules;
   final String startupQuote;
+  final ValueChanged<DateTime> onOpenSchedules;
+  final double topContentInset;
 
   @override
   Widget build(BuildContext context) {
@@ -23,56 +29,68 @@ class RealTodayTab extends StatelessWidget {
     return DiaryPage(
       showBackground: false,
       respectTopSafeArea: true,
+      padding: EdgeInsets.fromLTRB(18, 14 + topContentInset, 18, 112),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DiaryHero(
             eyebrow: '首页',
             title: '${profile.currentUserName} 和 ${profile.partnerName}',
-            subtitle: '恋爱空间',
             trailing: _DaysSeal(days: togetherDays),
             quote: startupQuote,
-            footer: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                DiaryBadge(label: '在一起 $togetherDays 天'),
-                DiaryBadge(
-                  label: '${entries.length} 篇日记',
-                  tone: DiaryBadgeTone.ink,
-                ),
-                DiaryBadge(
-                  label: '纪念日 ${formatDiaryShortDate(profile.togetherSince)}',
-                  tone: DiaryBadgeTone.sand,
-                ),
-              ],
+            footer: _HeroFooter(
+              anniversary: profile.togetherSince,
+              entries: entries,
+              schedules: schedules,
             ),
           ),
-          const SizedBox(height: 26),
-          _MoodSummaryPanel(entries: entries),
-          const SizedBox(height: 18),
-          _DiaryHeatmapPanel(entries: entries),
+          const SizedBox(height: 22),
+          _DiaryHeatmapPanel(
+            entries: entries,
+            schedules: schedules,
+            onOpenSchedules: onOpenSchedules,
+          ),
         ],
       ),
     );
   }
 }
 
-class _MoodSummaryPanel extends StatelessWidget {
-  const _MoodSummaryPanel({required this.entries});
+class _HeroFooter extends StatefulWidget {
+  const _HeroFooter({
+    required this.anniversary,
+    required this.entries,
+    required this.schedules,
+  });
 
+  final DateTime anniversary;
   final List<DiaryEntry> entries;
+  final List<ScheduleItem> schedules;
 
   @override
-  Widget build(BuildContext context) {
+  State<_HeroFooter> createState() => _HeroFooterState();
+}
+
+class _HeroFooterState extends State<_HeroFooter> {
+  List<DiaryEntry>? _cachedEntries;
+  int? _cachedEntryCount;
+  List<MapEntry<String, int>> _cachedTopMoods = const [];
+
+  List<MapEntry<String, int>> get _topMoods {
+    if (identical(_cachedEntries, widget.entries) &&
+        _cachedEntryCount == widget.entries.length) {
+      return _cachedTopMoods;
+    }
+
     final cutoff = DateTime.now().subtract(const Duration(days: 30));
-    final recentEntries = entries
-        .where((entry) => !entry.createdAt.isBefore(cutoff))
-        .toList();
     final moodCounts = <String, int>{};
-    for (final entry in recentEntries) {
+    for (final entry in widget.entries) {
+      if (entry.createdAt.isBefore(cutoff)) {
+        continue;
+      }
       moodCounts.update(entry.mood, (count) => count + 1, ifAbsent: () => 1);
     }
+
     final topMoods = moodCounts.entries.toList()
       ..sort((a, b) {
         final byCount = b.value.compareTo(a.value);
@@ -82,128 +100,68 @@ class _MoodSummaryPanel extends StatelessWidget {
         return a.key.compareTo(b.key);
       });
 
-    final dominantMood = topMoods.isEmpty ? '还没有' : topMoods.first.key;
+    _cachedEntries = widget.entries;
+    _cachedEntryCount = widget.entries.length;
+    _cachedTopMoods = topMoods;
+    return topMoods;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final topMoods = _topMoods;
+    final upcomingSchedule = _nearestUpcomingSchedule(widget.schedules);
+    final moodChips = [
+      for (var index = 0; index < topMoods.take(6).length; index++)
+        _MoodChip(mood: topMoods[index].key, colors: _moodColors(index)),
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DiaryPanel(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          child: topMoods.isEmpty
-              ? const DiaryEmptyState(
-                  title: '还没有心情统计',
-                  subtitle: '写下日记后，这里会自动汇总最近 30 天的心情分布。',
-                  icon: Icons.favorite_border_rounded,
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '最近心情',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(
-                                  color: DiaryPalette.ink,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                          ),
-                        ),
-                        Text(
-                          '近 30 天 · ${recentEntries.length} 篇',
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(
-                                color: DiaryPalette.wine,
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '最常出现的是「$dominantMood」。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: DiaryPalette.wine,
-                        height: 1.35,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (
-                          var index = 0;
-                          index < topMoods.take(8).length;
-                          index++
-                        )
-                          _MoodCountChip(
-                            mood: topMoods[index].key,
-                            count: topMoods[index].value,
-                            colors: _moodColors(index),
-                            highlighted: topMoods[index].key == dominantMood,
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            DiaryBadge(label: _englishMonthDay(widget.anniversary)),
+            if (upcomingSchedule != null)
+              DiaryBadge(
+                label:
+                    '${upcomingSchedule.item.title}·${_distanceLabel(upcomingSchedule.daysAway)}',
+                tone: DiaryBadgeTone.sand,
+              ),
+          ],
         ),
+        if (moodChips.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: moodChips),
+        ],
       ],
     );
   }
 }
 
-class _MoodCountChip extends StatelessWidget {
-  const _MoodCountChip({
-    required this.mood,
-    required this.count,
-    required this.colors,
-    required this.highlighted,
-  });
+class _MoodChip extends StatelessWidget {
+  const _MoodChip({required this.mood, required this.colors});
 
   final String mood;
-  final int count;
   final _MoodColors colors;
-  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
       decoration: BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.border, width: highlighted ? 1.3 : 1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colors.border),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            mood,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: colors.foreground,
-              fontWeight: FontWeight.w900,
-              height: 1,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: DiaryPalette.white.withValues(alpha: 0.56),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              '$count',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: colors.foreground,
-                fontWeight: FontWeight.w900,
-                height: 1,
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        mood,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: colors.foreground,
+          fontWeight: FontWeight.w900,
+          height: 1,
+        ),
       ),
     );
   }
@@ -258,9 +216,15 @@ _MoodColors _moodColors(int index) {
 }
 
 class _DiaryHeatmapPanel extends StatefulWidget {
-  const _DiaryHeatmapPanel({required this.entries});
+  const _DiaryHeatmapPanel({
+    required this.entries,
+    required this.schedules,
+    required this.onOpenSchedules,
+  });
 
   final List<DiaryEntry> entries;
+  final List<ScheduleItem> schedules;
+  final ValueChanged<DateTime> onOpenSchedules;
 
   @override
   State<_DiaryHeatmapPanel> createState() => _DiaryHeatmapPanelState();
@@ -268,6 +232,16 @@ class _DiaryHeatmapPanel extends StatefulWidget {
 
 class _DiaryHeatmapPanelState extends State<_DiaryHeatmapPanel> {
   late DateTime _visibleMonth;
+  List<DiaryEntry>? _cachedEntries;
+  int? _cachedEntryCount;
+  List<ScheduleItem>? _cachedSchedules;
+  int? _cachedScheduleCount;
+  DateTime? _cachedMonth;
+  _MonthHeatmapData _cachedMonthData = const _MonthHeatmapData(
+    countsByDay: {},
+    scheduleDays: {},
+    maxCount: 0,
+  );
 
   @override
   void initState() {
@@ -293,11 +267,16 @@ class _DiaryHeatmapPanelState extends State<_DiaryHeatmapPanel> {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final today = _dateOnly(DateTime.now());
-    final monthStart = DateTime(_visibleMonth.year, _visibleMonth.month);
-    final monthEnd = DateTime(_visibleMonth.year, _visibleMonth.month + 1, 0);
+  _MonthHeatmapData _dataForMonth(DateTime monthStart) {
+    if (identical(_cachedEntries, widget.entries) &&
+        _cachedEntryCount == widget.entries.length &&
+        identical(_cachedSchedules, widget.schedules) &&
+        _cachedScheduleCount == widget.schedules.length &&
+        _cachedMonth == monthStart) {
+      return _cachedMonthData;
+    }
+
+    final monthEnd = DateTime(monthStart.year, monthStart.month + 1, 0);
     final countsByDay = <DateTime, int>{};
     for (final entry in widget.entries) {
       final day = _dateOnly(entry.createdAt);
@@ -306,116 +285,104 @@ class _DiaryHeatmapPanelState extends State<_DiaryHeatmapPanel> {
       }
       countsByDay.update(day, (count) => count + 1, ifAbsent: () => 1);
     }
-    final activeDays = countsByDay.length;
-    final totalEntries = countsByDay.values.fold<int>(
-      0,
-      (total, count) => total + count,
-    );
+
     final maxCount = countsByDay.values.fold<int>(
       0,
       (max, count) => count > max ? count : max,
     );
+    final scheduleDays = _scheduleDaysInMonth(
+      schedules: widget.schedules,
+      monthStart: monthStart,
+    );
+    final data = _MonthHeatmapData(
+      countsByDay: Map.unmodifiable(countsByDay),
+      scheduleDays: scheduleDays,
+      maxCount: maxCount,
+    );
 
-    final subtitle = totalEntries == 0
-        ? '${_monthLabel(_visibleMonth)} 还没有日记记录。'
-        : '${_monthLabel(_visibleMonth)} 有 $activeDays 天写过，共 $totalEntries 篇。';
+    _cachedEntries = widget.entries;
+    _cachedEntryCount = widget.entries.length;
+    _cachedSchedules = widget.schedules;
+    _cachedScheduleCount = widget.schedules.length;
+    _cachedMonth = monthStart;
+    _cachedMonthData = data;
+    return data;
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DiarySectionHeader(title: '日记热力图', subtitle: subtitle),
-        const SizedBox(height: 14),
-        DiaryPanel(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragEnd: (details) {
-              final velocity = details.primaryVelocity ?? 0;
-              if (velocity > 260) {
-                _changeMonth(-1);
-              } else if (velocity < -260) {
-                _changeMonth(1);
-              }
-            },
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  @override
+  Widget build(BuildContext context) {
+    final today = _dateOnly(DateTime.now());
+    final monthStart = DateTime(_visibleMonth.year, _visibleMonth.month);
+    final monthData = _dataForMonth(monthStart);
+
+    return DiaryPanel(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity > 260) {
+            _changeMonth(-1);
+          } else if (velocity < -260) {
+            _changeMonth(1);
+          }
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    IconButton(
-                      tooltip: '上个月',
-                      onPressed: () => _changeMonth(-1),
-                      icon: const Icon(Icons.chevron_left_rounded),
-                    ),
-                    Expanded(
-                      child: Center(
-                        child: Text(
-                          _monthLabel(_visibleMonth),
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: DiaryPalette.ink,
-                                fontWeight: FontWeight.w900,
-                              ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '下个月',
-                      onPressed: _canGoNext ? () => _changeMonth(1) : null,
-                      icon: const Icon(Icons.chevron_right_rounded),
-                    ),
-                  ],
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: '上个月',
+                  onPressed: () => _changeMonth(-1),
+                  icon: const Icon(Icons.chevron_left_rounded),
                 ),
-                const SizedBox(height: 10),
-                _MonthHeatmapGrid(
-                  monthStart: monthStart,
-                  today: today,
-                  countsByDay: countsByDay,
-                  maxCount: maxCount,
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      _monthLabel(_visibleMonth),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: DiaryPalette.ink,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '左右滑动切换月份',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '少',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: DiaryPalette.wine,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    for (var level = 0; level <= 4; level++) ...[
-                      _HeatmapCell(color: _heatColor(level)),
-                      if (level < 4) const SizedBox(width: 4),
-                    ],
-                    const SizedBox(width: 6),
-                    const Text(
-                      '多',
-                      style: TextStyle(
-                        color: DiaryPalette.wine,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: '下个月',
+                  onPressed: _canGoNext ? () => _changeMonth(1) : null,
+                  icon: const Icon(Icons.chevron_right_rounded),
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: 4),
+            _MonthHeatmapGrid(
+              monthStart: monthStart,
+              today: today,
+              countsByDay: monthData.countsByDay,
+              scheduleDays: monthData.scheduleDays,
+              maxCount: monthData.maxCount,
+              onDaySelected: widget.onOpenSchedules,
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
+}
+
+class _MonthHeatmapData {
+  const _MonthHeatmapData({
+    required this.countsByDay,
+    required this.scheduleDays,
+    required this.maxCount,
+  });
+
+  final Map<DateTime, int> countsByDay;
+  final Set<DateTime> scheduleDays;
+  final int maxCount;
 }
 
 class _MonthHeatmapGrid extends StatelessWidget {
@@ -423,13 +390,17 @@ class _MonthHeatmapGrid extends StatelessWidget {
     required this.monthStart,
     required this.today,
     required this.countsByDay,
+    required this.scheduleDays,
     required this.maxCount,
+    required this.onDaySelected,
   });
 
   final DateTime monthStart;
   final DateTime today;
   final Map<DateTime, int> countsByDay;
+  final Set<DateTime> scheduleDays;
   final int maxCount;
+  final ValueChanged<DateTime> onDaySelected;
 
   @override
   Widget build(BuildContext context) {
@@ -438,54 +409,72 @@ class _MonthHeatmapGrid extends StatelessWidget {
     final dayCount = monthEnd.day;
     final cellCount = ((leadingBlankDays + dayCount + 6) ~/ 7) * 7;
 
-    return Column(
-      children: [
-        Row(
+    final cellSize = MediaQuery.sizeOf(context).width >= 390 ? 32.0 : 30.0;
+
+    return Center(
+      child: SizedBox(
+        width: cellSize * 7 + 5 * 6,
+        child: Column(
           children: [
-            for (final label in const ['一', '二', '三', '四', '五', '六', '日'])
-              Expanded(
-                child: Center(
-                  child: Text(
-                    label,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: DiaryPalette.wine,
-                      fontWeight: FontWeight.w800,
+            Row(
+              children: [
+                for (var index = 0; index < 7; index++) ...[
+                  SizedBox(
+                    width: cellSize,
+                    child: Text(
+                      const ['一', '二', '三', '四', '五', '六', '日'][index],
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: DiaryPalette.wine,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
+                  if (index < 6) const SizedBox(width: 5),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
+              itemCount: cellCount,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                mainAxisSpacing: 5,
+                crossAxisSpacing: 5,
               ),
+              itemBuilder: (context, index) {
+                final dayNumber = index - leadingBlankDays + 1;
+                if (dayNumber < 1 || dayNumber > dayCount) {
+                  return const SizedBox.shrink();
+                }
+                final day = DateTime(
+                  monthStart.year,
+                  monthStart.month,
+                  dayNumber,
+                );
+                final count = countsByDay[day] ?? 0;
+                final level = _heatLevel(count, maxCount);
+                final isFuture = day.isAfter(today);
+                return InkWell(
+                  borderRadius: BorderRadius.circular(7),
+                  onTap: () => onDaySelected(day),
+                  child: _MonthHeatmapCell(
+                    day: dayNumber,
+                    active: !isFuture && count > 0,
+                    hasSchedule: scheduleDays.contains(day),
+                    color: isFuture
+                        ? DiaryPalette.line.withValues(alpha: 0.24)
+                        : _heatColor(level),
+                  ),
+                );
+              },
+            ),
           ],
         ),
-        const SizedBox(height: 8),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.zero,
-          itemCount: cellCount,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 7,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-          ),
-          itemBuilder: (context, index) {
-            final dayNumber = index - leadingBlankDays + 1;
-            if (dayNumber < 1 || dayNumber > dayCount) {
-              return const SizedBox.shrink();
-            }
-            final day = DateTime(monthStart.year, monthStart.month, dayNumber);
-            final count = countsByDay[day] ?? 0;
-            final level = _heatLevel(count, maxCount);
-            final isFuture = day.isAfter(today);
-            return _MonthHeatmapCell(
-              day: dayNumber,
-              count: count,
-              color: isFuture
-                  ? DiaryPalette.line.withValues(alpha: 0.24)
-                  : _heatColor(level),
-            );
-          },
-        ),
-      ],
+      ),
     );
   }
 }
@@ -493,21 +482,22 @@ class _MonthHeatmapGrid extends StatelessWidget {
 class _MonthHeatmapCell extends StatelessWidget {
   const _MonthHeatmapCell({
     required this.day,
-    required this.count,
+    required this.active,
+    required this.hasSchedule,
     required this.color,
   });
 
   final int day;
-  final int count;
+  final bool active;
+  final bool hasSchedule;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final active = count > 0;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(9),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(color: DiaryPalette.white.withValues(alpha: 0.62)),
       ),
       child: Column(
@@ -521,38 +511,17 @@ class _MonthHeatmapCell extends StatelessWidget {
               height: 1,
             ),
           ),
-          if (active) ...[
-            const SizedBox(height: 2),
-            Text(
-              '$count',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: DiaryPalette.white.withValues(alpha: 0.90),
-                fontWeight: FontWeight.w800,
-                height: 1,
-                fontSize: 9,
-              ),
+          const SizedBox(height: 2),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: hasSchedule ? 4 : 0,
+            height: hasSchedule ? 4 : 0,
+            decoration: BoxDecoration(
+              color: active ? DiaryPalette.white : DiaryPalette.rose,
+              shape: BoxShape.circle,
             ),
-          ],
+          ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeatmapCell extends StatelessWidget {
-  const _HeatmapCell({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: DiaryPalette.white.withValues(alpha: 0.52)),
       ),
     );
   }
@@ -577,17 +546,117 @@ int _heatLevel(int count, int maxCount) {
 
 Color _heatColor(int level) {
   return switch (level) {
-    0 => DiaryPalette.line.withValues(alpha: 0.42),
-    1 => const Color(0xFFFFE0D9),
-    2 => const Color(0xFFF6B7A9),
-    3 => DiaryPalette.rose,
-    _ => const Color(0xFFA94E3E),
+    0 => const Color(0xFFF4E7DD),
+    1 => const Color(0xFFFFD9D1),
+    2 => const Color(0xFFF5A99A),
+    3 => const Color(0xFFD97862),
+    _ => const Color(0xFF9F4638),
   };
+}
+
+_UpcomingSchedule? _nearestUpcomingSchedule(List<ScheduleItem> schedules) {
+  final today = _dateOnly(DateTime.now());
+  const window = Duration(days: 15);
+  _UpcomingSchedule? nearest;
+
+  for (final schedule in schedules) {
+    final occurrence = schedule.nextOccurrenceOnOrAfter(today);
+    final daysAway = occurrence.difference(today).inDays;
+    if (daysAway < 0 || daysAway > window.inDays) {
+      continue;
+    }
+    final candidate = _UpcomingSchedule(
+      item: schedule,
+      occurrence: occurrence,
+      daysAway: daysAway,
+    );
+    if (nearest == null ||
+        candidate.occurrence.isBefore(nearest.occurrence) ||
+        (candidate.occurrence == nearest.occurrence &&
+            candidate.item.title.compareTo(nearest.item.title) < 0)) {
+      nearest = candidate;
+    }
+  }
+  return nearest;
+}
+
+Set<DateTime> _scheduleDaysInMonth({
+  required List<ScheduleItem> schedules,
+  required DateTime monthStart,
+}) {
+  final monthEnd = DateTime(monthStart.year, monthStart.month + 1, 0);
+  return {
+    for (final schedule in schedules)
+      if (_occurrenceForMonth(schedule, monthStart) case final occurrence?)
+        if (!occurrence.isBefore(monthStart) && !occurrence.isAfter(monthEnd))
+          occurrence,
+  };
+}
+
+DateTime? _occurrenceForMonth(ScheduleItem schedule, DateTime monthStart) {
+  final occurrence = schedule.occurrenceInYear(monthStart.year);
+  if (schedule.type == ScheduleItemType.oneTime &&
+      schedule.date.year != monthStart.year) {
+    return null;
+  }
+  if (occurrence.month != monthStart.month) {
+    return null;
+  }
+  return occurrence;
+}
+
+String _distanceLabel(int daysAway) {
+  if (daysAway == 0) {
+    return '今天';
+  }
+  return '$daysAway天后';
+}
+
+class _UpcomingSchedule {
+  const _UpcomingSchedule({
+    required this.item,
+    required this.occurrence,
+    required this.daysAway,
+  });
+
+  final ScheduleItem item;
+  final DateTime occurrence;
+  final int daysAway;
 }
 
 DateTime _dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
 
 String _monthLabel(DateTime month) => '${month.year}年${month.month}月';
+
+String _englishMonthDay(DateTime date) {
+  const months = [
+    'Jan.',
+    'Feb.',
+    'Mar.',
+    'Apr.',
+    'May',
+    'Jun.',
+    'Jul.',
+    'Aug.',
+    'Sep.',
+    'Oct.',
+    'Nov.',
+    'Dec.',
+  ];
+  return '${months[date.month - 1]} ${date.day}${_ordinalSuffix(date.day)}';
+}
+
+String _ordinalSuffix(int day) {
+  if (day >= 11 && day <= 13) {
+    return 'th';
+  }
+  return switch (day % 10) {
+    1 => 'st',
+    2 => 'nd',
+    3 => 'rd',
+    _ => 'th',
+  };
+}
 
 class _DaysSeal extends StatelessWidget {
   const _DaysSeal({required this.days});

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,7 +24,6 @@ import 'ui/onedrive_connect_page.dart';
 import 'ui/real_today_tab.dart';
 import 'ui/real_timeline_tab.dart';
 import 'ui/real_us_tab.dart';
-import 'ui/sync_messages.dart';
 import 'ui/sync_conflict_page.dart';
 
 const List<String> kDiaryMoods = ['开心', '安心', '温柔', '想念', '真诚', '治愈', '甜'];
@@ -217,9 +218,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   double? _oneDriveSyncProgress;
   String? _oneDriveSyncLabel;
   final List<_SyncStatusEntry> _syncStatusHistory = [];
-  String _syncWaitingMessage = randomSyncWaitingMessage();
   DateTime? _lastForegroundUpdateAt;
+  bool _isActionMenuOpen = false;
   OneDriveSyncConfig? _oneDriveConfig;
+  List<ScheduleItem> _schedules = const [];
   String? _storageRootPath;
   String? _startupLoadError;
 
@@ -330,6 +332,15 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     });
   }
 
+  void _closeActionMenu() {
+    if (!_isActionMenuOpen || !mounted) {
+      return;
+    }
+    setState(() {
+      _isActionMenuOpen = false;
+    });
+  }
+
   Future<void> _loadAppData() async {
     var currentStep = 'loadEntries';
     String? resolvedRootPath;
@@ -337,6 +348,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       final entries = await widget.storage.loadEntries();
       currentStep = 'loadProfile';
       final profile = await widget.storage.loadProfile();
+      currentStep = 'loadSchedules';
+      final schedules = await widget.storage.loadSchedules();
       currentStep = 'resolveRootDirectory';
       final rootDirectory = await widget.storage.resolveRootDirectory();
       resolvedRootPath = rootDirectory.path;
@@ -354,6 +367,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       setState(() {
         _entries = entries;
         _profile = profile;
+        _schedules = schedules;
         _lastSyncedAt = syncState.lastSyncedAt;
         _lastSyncFailedAt = syncState.lastFailedAt;
         _lastSyncFailureMessage = syncState.lastFailureMessage;
@@ -389,6 +403,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       setState(() {
         _entries = const [];
         _profile = DiaryStorage.seedProfile();
+        _schedules = const [];
         _lastSyncedAt = null;
         _lastSyncFailedAt = null;
         _lastSyncFailureMessage = null;
@@ -578,6 +593,83 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     setState(() {
       _entries = entries;
     });
+  }
+
+  Future<void> _reloadSchedules() async {
+    final schedules = await widget.storage.loadSchedules();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _schedules = schedules;
+    });
+  }
+
+  Future<ScheduleItem?> _openScheduleEditor({
+    ScheduleItem? initialSchedule,
+    DateTime? initialDate,
+  }) async {
+    if (!_guardWritableAction()) {
+      return null;
+    }
+    _closeActionMenu();
+
+    final schedule = await Navigator.of(context).push<ScheduleItem>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ScheduleEditorPage(
+          initialSchedule: initialSchedule,
+          initialDate: initialDate,
+          writeLockedListenable: _writeLockedListenable,
+          onWriteBlocked: _showWriteLockedMessage,
+        ),
+      ),
+    );
+
+    if (schedule == null) {
+      return null;
+    }
+
+    final savedSchedule = await widget.storage.saveSchedule(schedule);
+    await _reloadSchedules();
+    unawaited(
+      _triggerAutoSync(reason: initialSchedule == null ? '添加日程' : '更新日程'),
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(initialSchedule == null ? '日程已保存' : '日程已更新')),
+      );
+    }
+    return savedSchedule;
+  }
+
+  Future<void> _openScheduleManager({DateTime? initialDate}) async {
+    _closeActionMenu();
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ScheduleManagerPage(
+          schedules: _schedules,
+          initialDate: initialDate,
+          writeLockedListenable: _writeLockedListenable,
+          onWriteBlocked: _showWriteLockedMessage,
+          onSaveSchedule: (schedule) async {
+            await widget.storage.saveSchedule(schedule);
+            await _reloadSchedules();
+            unawaited(_triggerAutoSync(reason: '保存日程'));
+          },
+          onDeleteSchedule: (schedule) async {
+            await widget.storage.deleteSchedule(schedule);
+            await _reloadSchedules();
+            unawaited(_triggerAutoSync(reason: '删除日程'));
+          },
+        ),
+      ),
+    );
+
+    if (changed == true) {
+      await _reloadSchedules();
+    }
   }
 
   Future<DiaryEntry?> _openEditor({DiaryEntry? initialEntry}) async {
@@ -864,7 +956,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       _syncStartedAt = DateTime.now();
       _syncStatusHistory.clear();
       _recordSyncStatus(0, initialSyncLabel);
-      _syncWaitingMessage = randomSyncWaitingMessage();
       _lastForegroundUpdateAt = null;
     });
 
@@ -1152,7 +1243,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       _syncStartedAt = DateTime.now();
       _syncStatusHistory.clear();
       _recordSyncStatus(0, initialRestoreLabel);
-      _syncWaitingMessage = randomSyncWaitingMessage();
       _lastForegroundUpdateAt = null;
     });
 
@@ -1465,13 +1555,17 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
             : '${(_oneDriveSyncProgress!.clamp(0, 1) * 100).round()}%';
 
         return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: DiaryPalette.white.withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(28),
+              color: DiaryPalette.white.withValues(
+                alpha: DiaryPalette.surfaceStrongAlpha,
+              ),
+              borderRadius: BorderRadius.circular(24),
               border: Border.all(
-                color: DiaryPalette.white.withValues(alpha: 0.72),
+                color: DiaryPalette.white.withValues(
+                  alpha: DiaryPalette.surfaceBorderAlpha,
+                ),
               ),
               boxShadow: [
                 BoxShadow(
@@ -1482,7 +1576,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
               ],
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(15, 13, 15, 12),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 11),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1515,34 +1609,23 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
                       const DiaryBadge(label: '只读中', tone: DiaryBadgeTone.ink),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 9),
                   LinearProgressIndicator(value: _oneDriveSyncProgress),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _syncWaitingMessage,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: DiaryPalette.wine),
-                        ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: DiaryPalette.wine,
+                        minimumSize: Size.zero,
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontWeight: FontWeight.w800),
                       ),
-                      const SizedBox(width: 12),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          foregroundColor: DiaryPalette.wine,
-                          minimumSize: Size.zero,
-                          padding: EdgeInsets.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        onPressed: _showSyncStatusDetails,
-                        icon: const Icon(Icons.list_alt_rounded, size: 18),
-                        label: const Text('同步详情'),
-                      ),
-                    ],
+                      onPressed: _showSyncStatusDetails,
+                      icon: const Icon(Icons.list_alt_rounded, size: 18),
+                      label: const Text('同步详情'),
+                    ),
                   ),
                 ],
               ),
@@ -1570,6 +1653,16 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     final isSyncBusy = _isConnectingOneDrive || _isSyncingOneDrive;
     final isWriteLocked = _isWriteLocked;
     final hasOneDrive = _oneDriveConfig != null;
+    Widget buildAction({
+      required VoidCallback? onPressed,
+      required IconData icon,
+      required String label,
+    }) {
+      return _isActionMenuOpen
+          ? _GlassActionPill(icon: icon, label: label, onPressed: onPressed)
+          : const SizedBox.shrink();
+    }
+
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.paddingOf(context).bottom + 86,
@@ -1579,46 +1672,88 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          FloatingActionButton.extended(
-            heroTag: 'sync-action',
-            backgroundColor: DiaryPalette.rose.withValues(alpha: 0.88),
-            foregroundColor: DiaryPalette.white,
-            elevation: 8,
-            onPressed: isSyncBusy
-                ? null
-                : hasOneDrive
-                ? () => unawaited(_syncWithOneDrive())
-                : () => _connectOneDrive(),
-            icon: Icon(
-              hasOneDrive ? Icons.sync_rounded : Icons.cloud_sync_rounded,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: buildAction(
+              onPressed: isWriteLocked
+                  ? _showWriteLockedMessage
+                  : () => unawaited(_openScheduleEditor()),
+              icon: Icons.event_note_rounded,
+              label: '添加日程',
             ),
-            label: Text(
-              _isSyncingOneDrive
-                  ? '同步中...'
+          ),
+          if (_isActionMenuOpen) const SizedBox(height: 10),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: buildAction(
+              onPressed: isSyncBusy
+                  ? null
+                  : hasOneDrive
+                  ? () {
+                      _closeActionMenu();
+                      unawaited(_syncWithOneDrive());
+                    }
+                  : () {
+                      _closeActionMenu();
+                      _connectOneDrive();
+                    },
+              icon: hasOneDrive ? Icons.sync_rounded : Icons.cloud_sync_rounded,
+              label: _isSyncingOneDrive
+                  ? '同步中'
                   : hasOneDrive
                   ? '同步'
                   : '连接',
             ),
           ),
-          const SizedBox(height: 12),
-          FloatingActionButton.extended(
-            heroTag: 'write-action',
-            backgroundColor: DiaryPalette.rose.withValues(alpha: 0.88),
-            foregroundColor: DiaryPalette.white,
-            elevation: 8,
-            onPressed: isWriteLocked
-                ? _showWriteLockedMessage
-                : () => _openEditor(),
-            icon: Icon(
-              isWriteLocked
+          if (_isActionMenuOpen) const SizedBox(height: 10),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: buildAction(
+              onPressed: isWriteLocked
+                  ? _showWriteLockedMessage
+                  : () {
+                      _closeActionMenu();
+                      _openEditor();
+                    },
+              icon: isWriteLocked
                   ? Icons.visibility_rounded
                   : Icons.edit_note_rounded,
+              label: isWriteLocked ? '只能查看' : '写日记',
             ),
-            label: Text(isWriteLocked ? '只能查看' : '写日记'),
+          ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            height: _isActionMenuOpen ? 12 : 0,
+          ),
+          _GlassPlusButton(
+            isOpen: _isActionMenuOpen,
+            onPressed: () {
+              setState(() {
+                _isActionMenuOpen = !_isActionMenuOpen;
+              });
+            },
           ),
         ],
       ),
     );
+  }
+
+  double get _topStatusInset {
+    var inset = 0.0;
+    if (_startupLoadError != null) {
+      inset += 112;
+    }
+    if (_isSyncingOneDrive) {
+      inset += 104;
+    }
+    return inset;
   }
 
   @override
@@ -1650,12 +1785,16 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       RealTodayTab(
         profile: _profile,
         entries: _entries,
+        schedules: _schedules,
         startupQuote: _startupQuote,
+        topContentInset: _topStatusInset,
+        onOpenSchedules: (date) => _openScheduleManager(initialDate: date),
       ),
       RealTimelineTab(
         entries: _entries,
         rootDirectoryPath: _storageRootPath,
         isWriteLocked: _isWriteLocked,
+        topContentInset: _topStatusInset,
         onWriteBlocked: _showWriteLockedMessage,
         onOpenEntry: _openEntryDetail,
         onEditEntry: _editEntry,
@@ -1668,6 +1807,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         lastSyncedAt: _lastSyncedAt,
         lastSyncFailedAt: _lastSyncFailedAt,
         lastSyncFailureMessage: _lastSyncFailureMessage,
+        topContentInset: _topStatusInset,
         onEditProfile: () => _openProfileEditor(firstSetup: false),
         onOpenDustbin: _openDustbin,
         onConnectOneDrive: _connectOneDrive,
@@ -1682,24 +1822,38 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         children: [
           const Positioned.fill(child: DiaryBackground()),
           Positioned.fill(
-            child: PageView(
-              controller: _pageController,
-              clipBehavior: Clip.hardEdge,
-              physics: const _DeliberatePageScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              allowImplicitScrolling: true,
-              onPageChanged: (index) {
-                if (_currentIndex == index) {
-                  return;
-                }
-                setState(() {
-                  _currentIndex = index;
-                });
+            child: NotificationListener<ScrollStartNotification>(
+              onNotification: (_) {
+                return false;
               },
-              children: [for (final page in pages) _KeepAlivePage(child: page)],
+              child: PageView(
+                controller: _pageController,
+                clipBehavior: Clip.hardEdge,
+                physics: const _DeliberatePageScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                allowImplicitScrolling: true,
+                onPageChanged: (index) {
+                  if (_currentIndex == index) {
+                    return;
+                  }
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                children: [
+                  for (final page in pages) _KeepAlivePage(child: page),
+                ],
+              ),
             ),
           ),
+          if (_isActionMenuOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _closeActionMenu,
+              ),
+            ),
           Positioned(
             left: 0,
             right: 0,
@@ -1741,6 +1895,177 @@ class _KeepAlivePageState extends State<_KeepAlivePage>
   Widget build(BuildContext context) {
     super.build(context);
     return widget.child;
+  }
+}
+
+class _GlassActionPill extends StatelessWidget {
+  const _GlassActionPill({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = onPressed != null;
+    final radius = BorderRadius.circular(24);
+    return RepaintBoundary(
+      child: Tooltip(
+        message: label,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: [
+              if (isEnabled)
+                BoxShadow(
+                  color: DiaryPalette.rose.withValues(alpha: 0.22),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: radius,
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: radius,
+                  color: DiaryPalette.white.withValues(
+                    alpha: isEnabled
+                        ? DiaryPalette.surfaceGlassAlpha
+                        : DiaryPalette.surfaceSoftAlpha,
+                  ),
+                  border: Border.all(
+                    color: DiaryPalette.white.withValues(
+                      alpha: DiaryPalette.surfaceBorderAlpha,
+                    ),
+                  ),
+                ),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: radius,
+                    onTap: onPressed,
+                    splashColor: DiaryPalette.white.withValues(alpha: 0.16),
+                    highlightColor: DiaryPalette.white.withValues(alpha: 0.08),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 13,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: DiaryPalette.mist.withValues(alpha: 0.84),
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Icon(
+                              icon,
+                              size: 18,
+                              color: isEnabled
+                                  ? DiaryPalette.rose
+                                  : DiaryPalette.wine,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            label,
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: isEnabled
+                                      ? DiaryPalette.ink
+                                      : DiaryPalette.wine,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassPlusButton extends StatelessWidget {
+  const _GlassPlusButton({required this.isOpen, required this.onPressed});
+
+  final bool isOpen;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 54.0;
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: DiaryPalette.rose.withValues(alpha: 0.24),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: ClipOval(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: DiaryPalette.white.withValues(
+                  alpha: DiaryPalette.surfaceGlassAlpha,
+                ),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: DiaryPalette.white.withValues(
+                    alpha: DiaryPalette.surfaceBorderAlpha,
+                  ),
+                ),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onPressed,
+                  splashColor: DiaryPalette.rose.withValues(alpha: 0.12),
+                  highlightColor: DiaryPalette.rose.withValues(alpha: 0.08),
+                  child: SizedBox(
+                    width: size,
+                    height: size,
+                    child: AnimatedRotation(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutBack,
+                      turns: isOpen ? 0.125 : 0,
+                      child: Icon(
+                        Icons.add_rounded,
+                        color: DiaryPalette.rose,
+                        size: 32,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1793,76 +2118,116 @@ class _FloatingTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: DiaryPalette.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: DiaryPalette.white.withValues(alpha: 0.82)),
-        boxShadow: [
-          BoxShadow(
-            color: DiaryPalette.ink.withValues(alpha: 0.08),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(30),
-        child: SizedBox(
-          height: 68,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              const inset = 6.0;
-              final itemWidth =
-                  (constraints.maxWidth - inset * 2) / _items.length;
+    final radius = BorderRadius.circular(30);
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(
+              color: DiaryPalette.ink.withValues(alpha: 0.06),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: DiaryPalette.rose.withValues(alpha: 0.08),
+              blurRadius: 28,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                color: DiaryPalette.white.withValues(
+                  alpha: DiaryPalette.surfaceGlassAlpha,
+                ),
+                border: Border.all(
+                  color: DiaryPalette.white.withValues(
+                    alpha: DiaryPalette.surfaceBorderAlpha,
+                  ),
+                ),
+              ),
+              child: SizedBox(
+                height: 68,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    const inset = 6.0;
+                    final itemWidth =
+                        (constraints.maxWidth - inset * 2) / _items.length;
 
-              return AnimatedBuilder(
-                animation: pageController,
-                builder: (context, _) {
-                  final rawPage = pageController.hasClients
-                      ? pageController.page ?? currentIndex.toDouble()
-                      : currentIndex.toDouble();
-                  final page = rawPage
-                      .clamp(0.0, (_items.length - 1).toDouble())
-                      .toDouble();
+                    return AnimatedBuilder(
+                      animation: pageController,
+                      builder: (context, _) {
+                        final rawPage = pageController.hasClients
+                            ? pageController.page ?? currentIndex.toDouble()
+                            : currentIndex.toDouble();
+                        final page = rawPage
+                            .clamp(0.0, (_items.length - 1).toDouble())
+                            .toDouble();
 
-                  return Stack(
-                    children: [
-                      Positioned(
-                        top: inset,
-                        bottom: inset,
-                        left: inset + itemWidth * page,
-                        width: itemWidth,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: DiaryPalette.mist.withValues(alpha: 0.94),
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(inset),
-                        child: Row(
+                        return Stack(
                           children: [
-                            for (var index = 0; index < _items.length; index++)
-                              Expanded(
-                                child: _FloatingTabButton(
-                                  spec: _items[index],
-                                  selection: (1 - (page - index).abs())
-                                      .clamp(0.0, 1.0)
-                                      .toDouble(),
-                                  selected: currentIndex == index,
-                                  onTap: () => onSelected(index),
+                            Positioned(
+                              top: inset,
+                              bottom: inset,
+                              left: inset + itemWidth * page,
+                              width: itemWidth,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      DiaryPalette.white.withValues(
+                                        alpha: 0.70,
+                                      ),
+                                      DiaryPalette.mist.withValues(alpha: 0.52),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(
+                                    color: DiaryPalette.white.withValues(
+                                      alpha: 0.62,
+                                    ),
+                                  ),
                                 ),
                               ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(inset),
+                              child: Row(
+                                children: [
+                                  for (
+                                    var index = 0;
+                                    index < _items.length;
+                                    index++
+                                  )
+                                    Expanded(
+                                      child: _FloatingTabButton(
+                                        spec: _items[index],
+                                        selection: (1 - (page - index).abs())
+                                            .clamp(0.0, 1.0)
+                                            .toDouble(),
+                                        selected: currentIndex == index,
+                                        onTap: () => onSelected(index),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
                           ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -1940,6 +2305,824 @@ class _FloatingTabButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class ScheduleManagerPage extends StatefulWidget {
+  const ScheduleManagerPage({
+    super.key,
+    required this.schedules,
+    required this.initialDate,
+    required this.writeLockedListenable,
+    required this.onWriteBlocked,
+    required this.onSaveSchedule,
+    required this.onDeleteSchedule,
+  });
+
+  final List<ScheduleItem> schedules;
+  final DateTime? initialDate;
+  final ValueListenable<bool> writeLockedListenable;
+  final VoidCallback onWriteBlocked;
+  final Future<void> Function(ScheduleItem schedule) onSaveSchedule;
+  final Future<void> Function(ScheduleItem schedule) onDeleteSchedule;
+
+  @override
+  State<ScheduleManagerPage> createState() => _ScheduleManagerPageState();
+}
+
+class _ScheduleManagerPageState extends State<ScheduleManagerPage> {
+  late DateTime _selectedDate;
+  late List<ScheduleItem> _schedules;
+  bool _hasChanged = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDate = _scheduleDateOnly(widget.initialDate ?? DateTime.now());
+    _schedules = List<ScheduleItem>.from(widget.schedules);
+  }
+
+  Future<void> _openEditor({ScheduleItem? schedule, DateTime? date}) async {
+    if (widget.writeLockedListenable.value) {
+      widget.onWriteBlocked();
+      return;
+    }
+
+    final result = await Navigator.of(context).push<ScheduleItem>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ScheduleEditorPage(
+          initialSchedule: schedule,
+          initialDate: date ?? _selectedDate,
+          writeLockedListenable: widget.writeLockedListenable,
+          onWriteBlocked: widget.onWriteBlocked,
+        ),
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    await widget.onSaveSchedule(result);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final index = _schedules.indexWhere((item) => item.id == result.id);
+      if (index == -1) {
+        _schedules = [result, ..._schedules]..sort(_compareScheduleItems);
+      } else {
+        _schedules[index] = result;
+        _schedules.sort(_compareScheduleItems);
+      }
+      _hasChanged = true;
+    });
+  }
+
+  Future<void> _deleteSchedule(ScheduleItem schedule) async {
+    if (widget.writeLockedListenable.value) {
+      widget.onWriteBlocked();
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除这个日程？'),
+          content: Text('「${schedule.title}」会从日程表中移除。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    await widget.onDeleteSchedule(schedule);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _schedules = [
+        for (final item in _schedules)
+          if (item.id != schedule.id) item,
+      ];
+      _hasChanged = true;
+    });
+  }
+
+  Future<bool> _handlePop() async {
+    Navigator.of(context).pop(_hasChanged);
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final monthOccurrences = _scheduleOccurrencesForMonth(
+      schedules: _schedules,
+      month: _selectedDate,
+    );
+    final selectedOccurrences = monthOccurrences
+        .where((item) => isSameDay(item.date, _selectedDate))
+        .toList();
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _handlePop();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: DiaryPalette.paper.withValues(alpha: 0.96),
+          surfaceTintColor: Colors.transparent,
+          title: const Text('日程表'),
+          leading: IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: () => Navigator.of(context).pop(_hasChanged),
+          ),
+          actions: [
+            IconButton(
+              tooltip: '添加日程',
+              onPressed: () => _openEditor(date: _selectedDate),
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ],
+        ),
+        body: DiaryPage(
+          respectTopSafeArea: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DiaryCompactHeader(
+                eyebrow: '日程',
+                title: formatDiaryDate(_selectedDate),
+                footer: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    DiaryBadge(label: '${monthOccurrences.length} 个日程'),
+                    DiaryBadge(
+                      label: _monthScheduleLabel(_selectedDate),
+                      tone: DiaryBadgeTone.sand,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              _ScheduleDatePickerPanel(
+                selectedDate: _selectedDate,
+                onChanged: (date) {
+                  setState(() {
+                    _selectedDate = date;
+                  });
+                },
+              ),
+              const SizedBox(height: 18),
+              const DiarySectionHeader(title: '这一天'),
+              const SizedBox(height: 12),
+              if (selectedOccurrences.isEmpty)
+                DiaryEmptyState(title: '还没有日程', icon: Icons.event_note_rounded)
+              else
+                ...selectedOccurrences.map(
+                  (occurrence) => _ScheduleTile(
+                    occurrence: occurrence,
+                    onEdit: () => _openEditor(schedule: occurrence.item),
+                    onDelete: () => _deleteSchedule(occurrence.item),
+                  ),
+                ),
+              const SizedBox(height: 20),
+              const DiarySectionHeader(title: '本月日程'),
+              const SizedBox(height: 12),
+              if (monthOccurrences.isEmpty)
+                const DiaryEmptyState(
+                  title: '本月没有日程',
+                  icon: Icons.calendar_month_rounded,
+                )
+              else
+                ...monthOccurrences.map(
+                  (occurrence) => _ScheduleTile(
+                    occurrence: occurrence,
+                    onTap: () {
+                      setState(() {
+                        _selectedDate = occurrence.date;
+                      });
+                    },
+                    onEdit: () => _openEditor(schedule: occurrence.item),
+                    onDelete: () => _deleteSchedule(occurrence.item),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ScheduleEditorPage extends StatefulWidget {
+  const ScheduleEditorPage({
+    super.key,
+    this.initialSchedule,
+    this.initialDate,
+    required this.writeLockedListenable,
+    required this.onWriteBlocked,
+  });
+
+  final ScheduleItem? initialSchedule;
+  final DateTime? initialDate;
+  final ValueListenable<bool> writeLockedListenable;
+  final VoidCallback onWriteBlocked;
+
+  @override
+  State<ScheduleEditorPage> createState() => _ScheduleEditorPageState();
+}
+
+class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _descriptionController;
+  late ScheduleItemType _type;
+  late DateTime _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final schedule = widget.initialSchedule;
+    _titleController = TextEditingController(text: schedule?.title ?? '');
+    _descriptionController = TextEditingController(
+      text: schedule?.description ?? '',
+    );
+    _type = schedule?.type ?? ScheduleItemType.oneTime;
+    _selectedDate = _scheduleDateOnly(
+      schedule?.date ?? widget.initialDate ?? DateTime.now(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: '选择日期',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _selectedDate = _scheduleDateOnly(picked);
+    });
+  }
+
+  void _submit() {
+    if (widget.writeLockedListenable.value) {
+      widget.onWriteBlocked();
+      return;
+    }
+
+    late final String title;
+    try {
+      title = ScheduleItem.normalizeTitle(_titleController.text);
+    } on FormatException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
+
+    final now = DateTime.now();
+    final initial = widget.initialSchedule;
+    final description = _descriptionController.text.trim();
+    Navigator.of(context).pop(
+      ScheduleItem(
+        id: initial?.id ?? 'schedule_${now.microsecondsSinceEpoch}',
+        title: title,
+        description: description.isEmpty ? null : description,
+        date: _selectedDate,
+        type: _type,
+        createdAt: initial?.createdAt ?? now,
+        updatedAt: initial == null ? null : now,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.initialSchedule != null;
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: DiaryPalette.paper.withValues(alpha: 0.96),
+        surfaceTintColor: Colors.transparent,
+        title: Text(isEditing ? '编辑日程' : '添加日程'),
+        actions: [
+          TextButton(onPressed: _submit, child: const Text('保存')),
+          const SizedBox(width: 6),
+        ],
+      ),
+      body: DiaryPage(
+        respectTopSafeArea: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DiaryCompactHeader(
+              eyebrow: '日程',
+              title: isEditing ? '编辑重要日子' : '记录一个安排',
+              footer: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  DiaryBadge(label: _scheduleTypeLabel(_type)),
+                  DiaryBadge(
+                    label: _scheduleDateLabel(_type, _selectedDate),
+                    tone: DiaryBadgeTone.sand,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            DiaryPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _titleController,
+                    maxLength: 8,
+                    decoration: const InputDecoration(
+                      labelText: '标题',
+                      hintText: '他的生日',
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _descriptionController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: '描述（可选）',
+                      hintText: '准备礼物、订餐、行程备注...',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('单次行程'),
+                        selected: _type == ScheduleItemType.oneTime,
+                        onSelected: (_) {
+                          setState(() {
+                            _type = ScheduleItemType.oneTime;
+                          });
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('每年重复'),
+                        selected: _type == ScheduleItemType.yearly,
+                        onSelected: (_) {
+                          setState(() {
+                            _type = ScheduleItemType.yearly;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (_type == ScheduleItemType.oneTime)
+                    OutlinedButton.icon(
+                      onPressed: _pickDate,
+                      icon: const Icon(Icons.calendar_month_rounded),
+                      label: Text('日期：${formatDiaryDate(_selectedDate)}'),
+                    )
+                  else
+                    _ScheduleMonthDayFields(
+                      selectedDate: _selectedDate,
+                      onChanged: (date) {
+                        setState(() {
+                          _selectedDate = date;
+                        });
+                      },
+                    ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _submit,
+                      icon: const Icon(Icons.check_rounded),
+                      label: const Text('保存日程'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScheduleDatePickerPanel extends StatelessWidget {
+  const _ScheduleDatePickerPanel({
+    required this.selectedDate,
+    required this.onChanged,
+  });
+
+  final DateTime selectedDate;
+  final ValueChanged<DateTime> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final startYear = math.min(2000, selectedDate.year);
+    final endYear = math.max(2100, selectedDate.year);
+    final daysInMonth = _lastScheduleDayOfMonth(
+      selectedDate.year,
+      selectedDate.month,
+    );
+
+    return DiaryPanel(
+      padding: const EdgeInsets.all(12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final fieldWidth = constraints.maxWidth >= 390
+              ? (constraints.maxWidth - 16) / 3
+              : (constraints.maxWidth - 8) / 2;
+          return Wrap(
+            spacing: 8,
+            runSpacing: 10,
+            children: [
+              SizedBox(
+                width: fieldWidth,
+                child: _ScheduleDropdown<int>(
+                  label: '年',
+                  value: selectedDate.year,
+                  items: [
+                    for (var year = startYear; year <= endYear; year++) year,
+                  ],
+                  itemLabel: (year) => '$year',
+                  onChanged: (year) {
+                    onChanged(
+                      _clampedScheduleDate(
+                        year: year,
+                        month: selectedDate.month,
+                        day: selectedDate.day,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(
+                width: fieldWidth,
+                child: _ScheduleDropdown<int>(
+                  label: '月',
+                  value: selectedDate.month,
+                  items: const [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                  itemLabel: (month) => '$month月',
+                  onChanged: (month) {
+                    onChanged(
+                      _clampedScheduleDate(
+                        year: selectedDate.year,
+                        month: month,
+                        day: selectedDate.day,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(
+                width: fieldWidth,
+                child: _ScheduleDropdown<int>(
+                  label: '日',
+                  value: selectedDate.day.clamp(1, daysInMonth).toInt(),
+                  items: [for (var day = 1; day <= daysInMonth; day++) day],
+                  itemLabel: (day) => '$day日',
+                  onChanged: (day) {
+                    onChanged(
+                      _clampedScheduleDate(
+                        year: selectedDate.year,
+                        month: selectedDate.month,
+                        day: day,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ScheduleMonthDayFields extends StatelessWidget {
+  const _ScheduleMonthDayFields({
+    required this.selectedDate,
+    required this.onChanged,
+  });
+
+  final DateTime selectedDate;
+  final ValueChanged<DateTime> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final daysInMonth = _lastScheduleDayOfMonth(
+      selectedDate.year,
+      selectedDate.month,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fieldWidth = constraints.maxWidth >= 340
+            ? (constraints.maxWidth - 10) / 2
+            : constraints.maxWidth;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            SizedBox(
+              width: fieldWidth,
+              child: _ScheduleDropdown<int>(
+                label: '每年月份',
+                value: selectedDate.month,
+                items: const [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                itemLabel: (month) => '$month月',
+                onChanged: (month) {
+                  onChanged(
+                    _clampedScheduleDate(
+                      year: selectedDate.year,
+                      month: month,
+                      day: selectedDate.day,
+                    ),
+                  );
+                },
+              ),
+            ),
+            SizedBox(
+              width: fieldWidth,
+              child: _ScheduleDropdown<int>(
+                label: '日期',
+                value: selectedDate.day.clamp(1, daysInMonth).toInt(),
+                items: [for (var day = 1; day <= daysInMonth; day++) day],
+                itemLabel: (day) => '$day日',
+                onChanged: (day) {
+                  onChanged(
+                    _clampedScheduleDate(
+                      year: selectedDate.year,
+                      month: selectedDate.month,
+                      day: day,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ScheduleDropdown<T> extends StatelessWidget {
+  const _ScheduleDropdown({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.itemLabel,
+    required this.onChanged,
+  });
+
+  final String label;
+  final T value;
+  final List<T> items;
+  final String Function(T item) itemLabel;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<T>(
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
+      ),
+      items: [
+        for (final item in items)
+          DropdownMenuItem<T>(value: item, child: Text(itemLabel(item))),
+      ],
+      onChanged: (item) {
+        if (item != null) {
+          onChanged(item);
+        }
+      },
+    );
+  }
+}
+
+class _ScheduleTile extends StatelessWidget {
+  const _ScheduleTile({
+    required this.occurrence,
+    this.onTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final _ScheduleOccurrence occurrence;
+  final VoidCallback? onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = occurrence.item;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: DiaryPanel(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: DiaryPalette.mist,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: DiaryPalette.white),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  item.type == ScheduleItemType.yearly
+                      ? Icons.cake_rounded
+                      : Icons.event_available_rounded,
+                  color: DiaryPalette.rose,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: DiaryPalette.ink,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${formatDiaryDate(occurrence.date)} · ${_scheduleTypeLabel(item.type)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DiaryPalette.wine,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (item.description?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        item.description!.trim(),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              PopupMenuButton<_ScheduleAction>(
+                onSelected: (action) {
+                  switch (action) {
+                    case _ScheduleAction.edit:
+                      onEdit();
+                      break;
+                    case _ScheduleAction.delete:
+                      onDelete();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: _ScheduleAction.edit, child: Text('编辑')),
+                  PopupMenuItem(
+                    value: _ScheduleAction.delete,
+                    child: Text('删除'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _ScheduleAction { edit, delete }
+
+class _ScheduleOccurrence {
+  const _ScheduleOccurrence({required this.item, required this.date});
+
+  final ScheduleItem item;
+  final DateTime date;
+}
+
+List<_ScheduleOccurrence> _scheduleOccurrencesForMonth({
+  required List<ScheduleItem> schedules,
+  required DateTime month,
+}) {
+  final monthStart = DateTime(month.year, month.month);
+  final monthEnd = DateTime(month.year, month.month + 1, 0);
+  final occurrences = <_ScheduleOccurrence>[];
+  for (final schedule in schedules) {
+    final occurrence = schedule.occurrenceInYear(month.year);
+    if (schedule.type == ScheduleItemType.oneTime &&
+        schedule.date.year != month.year) {
+      continue;
+    }
+    if (occurrence.isBefore(monthStart) || occurrence.isAfter(monthEnd)) {
+      continue;
+    }
+    occurrences.add(_ScheduleOccurrence(item: schedule, date: occurrence));
+  }
+  occurrences.sort((a, b) {
+    final byDate = a.date.compareTo(b.date);
+    if (byDate != 0) {
+      return byDate;
+    }
+    return a.item.title.compareTo(b.item.title);
+  });
+  return occurrences;
+}
+
+int _compareScheduleItems(ScheduleItem a, ScheduleItem b) {
+  final byDate = a.date.compareTo(b.date);
+  if (byDate != 0) {
+    return byDate;
+  }
+  return a.title.compareTo(b.title);
+}
+
+DateTime _scheduleDateOnly(DateTime date) {
+  return DateTime(date.year, date.month, date.day);
+}
+
+int _lastScheduleDayOfMonth(int year, int month) {
+  return DateTime(year, month + 1, 0).day;
+}
+
+DateTime _clampedScheduleDate({
+  required int year,
+  required int month,
+  required int day,
+}) {
+  final lastDay = _lastScheduleDayOfMonth(year, month);
+  return DateTime(year, month, day.clamp(1, lastDay).toInt());
+}
+
+String _scheduleTypeLabel(ScheduleItemType type) {
+  return switch (type) {
+    ScheduleItemType.oneTime => '单次行程',
+    ScheduleItemType.yearly => '每年重复',
+  };
+}
+
+String _scheduleDateLabel(ScheduleItemType type, DateTime date) {
+  return switch (type) {
+    ScheduleItemType.oneTime => formatDiaryDate(date),
+    ScheduleItemType.yearly => '每年 ${date.month}月${date.day}日',
+  };
+}
+
+String _monthScheduleLabel(DateTime date) {
+  return '${date.year}年${date.month}月';
 }
 
 class DustbinPage extends StatefulWidget {
@@ -2107,16 +3290,14 @@ class _DustbinPageState extends State<DustbinPage> {
               child: _deletedEntries.isEmpty
                   ? const DiaryEmptyState(
                       title: '回收站是空的',
-                      subtitle: '删除后的日记会先放在这里，7 天后才会真正清理。',
                       icon: Icons.restore_from_trash_rounded,
                     )
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const DiaryHero(
+                        const DiaryCompactHeader(
                           eyebrow: '删除保护',
                           title: '最近删除的日记',
-                          subtitle: '你可以在 7 天内恢复，也可以直接彻底删除。',
                         ),
                         const SizedBox(height: 20),
                         ..._deletedEntries.map((deletedEntry) {
@@ -2363,12 +3544,9 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DiaryHero(
+                DiaryCompactHeader(
                   eyebrow: widget.isFirstSetup ? '初始设置' : '编辑资料',
                   title: widget.isFirstSetup ? '先把资料填好' : '更新资料',
-                  subtitle: widget.isFirstSetup
-                      ? '把名字和在一起的日期填好，首页和统计会自动带上这些信息。'
-                      : '这些信息会影响首页展示、统计和纪念日标记。',
                 ),
                 if (widget.isFirstSetup &&
                     widget.canRestoreFromOneDrive &&
@@ -2695,10 +3873,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
             ),
             if (_entry.attachments.isNotEmpty) ...[
               const SizedBox(height: 22),
-              const DiarySectionHeader(
-                title: '附图',
-                subtitle: '先保留本地图片和预览，后续再继续优化同步体验。',
-              ),
+              const DiarySectionHeader(title: '附图'),
               const SizedBox(height: 12),
               DiaryPanel(
                 child: AttachmentGrid(
@@ -2708,10 +3883,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
               ),
             ],
             const SizedBox(height: 22),
-            const DiarySectionHeader(
-              title: '评论区',
-              subtitle: '评论会和这篇日记一起保存到本地，再由同步层决定何时上传。',
-            ),
+            const DiarySectionHeader(title: '评论区'),
             const SizedBox(height: 12),
             DiaryPanel(
               child: Column(
@@ -2761,7 +3933,6 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
             if (_entry.comments.isEmpty)
               const DiaryEmptyState(
                 title: '还没有评论',
-                subtitle: '可以先从一句简单的回应开始。',
                 icon: Icons.chat_bubble_outline_rounded,
               )
             else
@@ -3022,19 +4193,11 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '默认建议压缩导入。需要保留完整清晰度时，再选原图。',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF8D687C),
-                  ),
-                ),
                 const SizedBox(height: 16),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.data_saver_on_rounded),
                   title: const Text('节省流量'),
-                  subtitle: const Text('压缩后导入，上传更省流量'),
                   onTap: () {
                     Navigator.of(context).pop(_AttachmentImportMode.compressed);
                   },
@@ -3043,7 +4206,6 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.high_quality_rounded),
                   title: const Text('原图导入'),
-                  subtitle: const Text('保留原图质量，上传体积更大'),
                   onTap: () {
                     Navigator.of(context).pop(_AttachmentImportMode.original);
                   },
@@ -3306,12 +4468,9 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DiaryHero(
+                DiaryCompactHeader(
                   eyebrow: _isEditMode ? '编辑日记' : '新建日记',
                   title: _isEditMode ? '编辑这篇日记' : '写一篇新日记',
-                  subtitle: _isEditMode
-                      ? '支持修改标题、内容、心情、日期和附图，保存后会回到时间线。'
-                      : '支持草稿、本地保存、附图和评论。',
                 ),
                 const SizedBox(height: 20),
                 DiaryPanel(
@@ -3359,10 +4518,7 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                const DiarySectionHeader(
-                  title: '状态',
-                  subtitle: '心情、日期和图片先决定这篇日记的外轮廓。',
-                ),
+                const DiarySectionHeader(title: '状态'),
                 const SizedBox(height: 12),
                 DiaryPanel(
                   child: Column(
@@ -3450,96 +4606,6 @@ class _CreateEntryPageState extends State<CreateEntryPage> {
   }
 }
 
-class HeroHeader extends StatelessWidget {
-  const HeroHeader({
-    super.key,
-    required this.profile,
-    required this.entryCount,
-  });
-
-  final CoupleProfile profile;
-  final int entryCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final togetherDays =
-        DateTime.now().difference(profile.togetherSince).inDays + 1;
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFF5D1DC), Color(0xFFE7D8FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(32),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CoupleAvatar(label: profile.maleName.characters.first),
-              const SizedBox(width: 10),
-              CoupleAvatar(label: profile.femaleName.characters.first),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  '第 $togetherDays 天',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF7A4A60),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Text(
-            '${profile.maleName} & ${profile.femaleName}',
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF7A4A60),
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '把今天的内容记下来。',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              InfoChip(label: '在一起', value: '$togetherDays 天'),
-              InfoChip(label: '共同日记', value: '$entryCount 篇'),
-              InfoChip(
-                label: '纪念起点',
-                value: formatShortDate(profile.togetherSince),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class DraftHintCard extends StatelessWidget {
   const DraftHintCard({super.key});
 
@@ -3571,141 +4637,6 @@ class DraftHintCard extends StatelessWidget {
                 height: 1.5,
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class PageHeader extends StatelessWidget {
-  const PageHeader({
-    super.key,
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          eyebrow,
-          style: theme.textTheme.labelLarge?.copyWith(
-            color: const Color(0xFFC85C8E),
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          title,
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          subtitle,
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: const Color(0xFF8D687C),
-            height: 1.35,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class SectionTitle extends StatelessWidget {
-  const SectionTitle({super.key, required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: const Color(0xFF8D687C),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class CoupleAvatar extends StatelessWidget {
-  const CoupleAvatar({super.key, required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: Colors.white.withValues(alpha: 0.85),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-          fontWeight: FontWeight.w800,
-          color: const Color(0xFF7A4A60),
-        ),
-      ),
-    );
-  }
-}
-
-class InfoChip extends StatelessWidget {
-  const InfoChip({super.key, required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: const Color(0xFF8D687C)),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
         ],
       ),
@@ -3870,15 +4801,46 @@ class DiaryAttachmentImage extends StatelessWidget {
       return _AttachmentPlaceholder(width: width, height: height);
     }
 
-    return Image.file(
-      File(resolveStoredPath(rootDirectoryPath, path)),
-      width: width,
-      height: height,
-      fit: fit,
-      errorBuilder: (_, _, _) =>
-          _AttachmentPlaceholder(width: width, height: height),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+        final constrainedWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : null;
+        final constrainedHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : null;
+        final targetWidth = width ?? constrainedWidth;
+        final targetHeight = height ?? constrainedHeight;
+
+        return Image.file(
+          File(resolveStoredPath(rootDirectoryPath, path)),
+          width: width,
+          height: height,
+          fit: fit,
+          cacheWidth: preferOriginal
+              ? null
+              : _attachmentCacheExtent(targetWidth, devicePixelRatio),
+          cacheHeight: preferOriginal
+              ? null
+              : _attachmentCacheExtent(targetHeight, devicePixelRatio),
+          filterQuality: preferOriginal
+              ? FilterQuality.high
+              : FilterQuality.medium,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) =>
+              _AttachmentPlaceholder(width: width, height: height),
+        );
+      },
     );
   }
+}
+
+int? _attachmentCacheExtent(double? logicalExtent, double devicePixelRatio) {
+  if (logicalExtent == null || !logicalExtent.isFinite || logicalExtent <= 0) {
+    return null;
+  }
+  return (logicalExtent * devicePixelRatio).ceil();
 }
 
 class AttachmentPreviewPage extends StatefulWidget {
@@ -4078,43 +5040,6 @@ class CommentCard extends StatelessWidget {
   }
 }
 
-class EntryTag extends StatelessWidget {
-  const EntryTag({super.key, required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return DiaryBadge(label: label);
-  }
-}
-
-class EmptyCard extends StatelessWidget {
-  const EmptyCard({super.key, required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return DiaryEmptyState(title: title, subtitle: subtitle);
-  }
-}
-
-String formatDate(DateTime date) {
-  return '${date.year} 年 ${date.month} 月 ${date.day} 日';
-}
-
-String formatTime(DateTime date) {
-  final hour = date.hour.toString().padLeft(2, '0');
-  final minute = date.minute.toString().padLeft(2, '0');
-  return '$hour:$minute';
-}
-
-String formatShortDate(DateTime date) {
-  return '${date.month}/${date.day}';
-}
-
 bool isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
 }
@@ -4261,11 +5186,7 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const DiaryHero(
-              eyebrow: '同步设置',
-              title: '控制 OneDrive 同步',
-              subtitle: '默认只手动同步。自动同步需要明确打开，并且会受最小间隔和删除保护限制。',
-            ),
+            const DiaryCompactHeader(eyebrow: '同步设置', title: '控制 OneDrive 同步'),
             const SizedBox(height: 20),
             DiaryPanel(
               child: Column(
@@ -4278,21 +5199,11 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                       hintText: '默认 love_diary',
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '两台设备必须使用同一个目录名。目录切换后，建议先手动同步一次。',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
-                  ),
                   const SizedBox(height: 18),
                   SwitchListTile(
                     value: _syncOnWrite,
                     contentPadding: EdgeInsets.zero,
                     title: const Text('写入后自动同步'),
-                    subtitle: const Text(
-                      '开启后，发布、评论和删除会自动同步；同步进行时应用保持可浏览，但写入入口会暂时只读。',
-                    ),
                     onChanged: (value) {
                       setState(() {
                         _syncOnWrite = value;
@@ -4317,13 +5228,6 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                       hintText: '默认 3',
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '一次同步里的删除动作超过这个数量时会被拦截，避免误删扩散到云端。',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
-                  ),
                 ],
               ),
             ),
@@ -4336,7 +5240,6 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                     value: _syncOriginals,
                     contentPadding: EdgeInsets.zero,
                     title: const Text('同步原图到 OneDrive'),
-                    subtitle: const Text('关闭时只同步缩略图和预览图，旧原图会留在本机。'),
                     onChanged: (value) {
                       setState(() {
                         _syncOriginals = value;
@@ -4347,7 +5250,6 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                     value: _downloadOriginals,
                     contentPadding: EdgeInsets.zero,
                     title: const Text('从 OneDrive 下载原图'),
-                    subtitle: const Text('关闭时新设备不会主动拉取云端原图。'),
                     onChanged: (value) {
                       setState(() {
                         _downloadOriginals = value;

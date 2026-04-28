@@ -196,11 +196,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const DiaryHero(
-              eyebrow: 'OneDrive',
-              title: '连接云端同步',
-              subtitle: '当前先使用设备码授权。这里不会自动跳转浏览器，拿到验证码后你可以手动打开登录页面。',
-            ),
+            const DiaryCompactHeader(eyebrow: 'OneDrive', title: '连接云端同步'),
             const SizedBox(height: 22),
             DiaryPanel(
               child: Column(
@@ -239,10 +235,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
             ),
             if (session != null) ...[
               const SizedBox(height: 22),
-              const DiarySectionHeader(
-                title: '完成授权',
-                subtitle: '先打开验证地址，输入验证码并登录微软账号，然后回到这里确认。',
-              ),
+              const DiarySectionHeader(title: '完成授权'),
               const SizedBox(height: 14),
               DiaryPanel(
                 child: Column(

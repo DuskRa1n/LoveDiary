@@ -17,6 +17,7 @@ class RealUsTab extends StatelessWidget {
     required this.onOpenDustbin,
     required this.onConnectOneDrive,
     required this.onOpenOneDriveSettings,
+    this.topContentInset = 0,
   });
 
   final CoupleProfile profile;
@@ -29,6 +30,7 @@ class RealUsTab extends StatelessWidget {
   final Future<void> Function() onOpenDustbin;
   final Future<void> Function() onConnectOneDrive;
   final Future<void> Function() onOpenOneDriveSettings;
+  final double topContentInset;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +48,7 @@ class RealUsTab extends StatelessWidget {
     return DiaryPage(
       showBackground: false,
       respectTopSafeArea: true,
+      padding: EdgeInsets.fromLTRB(18, 14 + topContentInset, 18, 112),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -58,7 +61,6 @@ class RealUsTab extends StatelessWidget {
                 _SettingsTile(
                   icon: Icons.favorite_rounded,
                   title: '关系信息',
-                  subtitle: '名字、纪念日、主视角',
                   onTap: onEditProfile,
                 ),
                 const _SettingsDivider(),
@@ -78,7 +80,6 @@ class RealUsTab extends StatelessWidget {
                 _SettingsTile(
                   icon: Icons.tune_rounded,
                   title: '其他设置',
-                  subtitle: '回收站、关于',
                   onTap: () => _openOtherSettings(
                     context,
                     commentCount: commentCount,
@@ -172,7 +173,6 @@ class RealUsTab extends StatelessWidget {
                       _SettingsTile(
                         icon: Icons.restore_from_trash_rounded,
                         title: '回收站',
-                        subtitle: '删除后保留 7 天',
                         onTap: () {
                           Navigator.of(sheetContext).pop();
                           onOpenDustbin();
@@ -214,7 +214,7 @@ class RealUsTab extends StatelessWidget {
               SizedBox(height: 14),
               Text('作者：Eric Chen'),
               SizedBox(height: 8),
-              Text('版本：1.1.1+49'),
+              Text('版本：1.2.5+59'),
               SizedBox(height: 14),
               Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
               SizedBox(height: 8),
@@ -246,7 +246,6 @@ class _ProfileHeader extends StatelessWidget {
     return DiaryHero(
       eyebrow: '我们',
       title: profile.currentUserName,
-      subtitle: '个人信息设置',
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -313,14 +312,14 @@ class _SettingsTile extends StatelessWidget {
   const _SettingsTile({
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.onTap,
+    this.subtitle,
     this.trailing,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final VoidCallback onTap;
   final Widget? trailing;
 
@@ -354,16 +353,18 @@ class _SettingsTile extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.35,
+                  if (subtitle?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle!.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DiaryPalette.wine,
+                        height: 1.35,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

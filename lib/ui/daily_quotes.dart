@@ -403,11 +403,6 @@ const List<String> kDailyQuotes = [
   '愿我们的故事，慢慢写，慢慢甜。',
 ];
 
-String dailyQuoteForDate(DateTime date) {
-  final dayKey = date.year * 10000 + date.month * 100 + date.day;
-  return kDailyQuotes[dayKey % kDailyQuotes.length];
-}
-
 String randomDailyQuote() {
   return kDailyQuotes[Random().nextInt(kDailyQuotes.length)];
 }

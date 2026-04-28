@@ -230,6 +230,102 @@ void main() {
     expect(plan.actions.single.relativePath, 'entries/remote_only.json');
   });
 
+  test('远端非业务文件不会进入同步计划', () async {
+    final service = DiarySyncService(
+      storage: storage,
+      remoteSource: FakeRemoteSource(
+        RemoteSyncSnapshot(
+          cursor: 'cursor_remote_noise',
+          files: [
+            RemoteSyncFile(
+              relativePath: 'local_settings.json',
+              revision: 'rev_local_settings',
+              fingerprint: '1:1',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 1,
+              isBinary: false,
+            ),
+            RemoteSyncFile(
+              relativePath: 'sync/onedrive_state.json',
+              revision: 'rev_sync_state',
+              fingerprint: '1:1',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 1,
+              isBinary: false,
+            ),
+            RemoteSyncFile(
+              relativePath: 'drafts/entry_draft.json',
+              revision: 'rev_draft',
+              fingerprint: '1:1',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 1,
+              isBinary: false,
+            ),
+            RemoteSyncFile(
+              relativePath: 'entries/remote_only.json',
+              revision: 'rev_remote_1',
+              fingerprint: '100:1000',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 100,
+              isBinary: false,
+            ),
+          ],
+        ),
+      ),
+      provider: SyncProvider.oneDrive,
+    );
+
+    final plan = await service.buildPlan();
+    final actionPaths = plan.actions
+        .map((action) => action.relativePath)
+        .toList();
+
+    expect(actionPaths, ['entries/remote_only.json']);
+  });
+
+  test('首次同步同名同时间但指纹不同会标记冲突', () async {
+    await storage.saveProfile(
+      CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+    );
+    final localFile = (await storage.listSyncFiles()).singleWhere(
+      (file) => file.relativePath == 'profile.json',
+    );
+
+    final service = DiarySyncService(
+      storage: storage,
+      remoteSource: FakeRemoteSource(
+        RemoteSyncSnapshot(
+          cursor: 'cursor_initial',
+          files: [
+            RemoteSyncFile(
+              relativePath: 'profile.json',
+              revision: 'rev_profile_remote',
+              fingerprint: 'remote-content-hash',
+              modifiedAt: localFile.modifiedAt,
+              size: localFile.size,
+              isBinary: localFile.isBinary,
+            ),
+          ],
+        ),
+      ),
+      provider: SyncProvider.oneDrive,
+    );
+
+    final plan = await service.buildPlan();
+
+    expect(plan.actions, hasLength(1));
+    expect(plan.actions.single.type, SyncActionType.conflict);
+    expect(
+      plan.actions.single.reason,
+      'initial_sync_unverified_same_timestamp',
+    );
+  });
+
   test('本地和远端都改过同一路径时会标记冲突', () async {
     await storage.saveProfile(
       CoupleProfile(

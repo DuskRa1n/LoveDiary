@@ -66,6 +66,8 @@ class DiaryStorage {
   final SecretStore? _secretStoreOverride;
 
   static const _profileFileName = 'profile.json';
+  static const _localSettingsFileName = 'local_settings.json';
+  static const _schedulesFileName = 'schedules.json';
   static const _entriesDirectoryName = 'entries';
   static const _attachmentsDirectoryName = 'attachments';
   static const _dustbinDirectoryName = 'dustbin';
@@ -109,18 +111,38 @@ class DiaryStorage {
       return const [];
     }
 
-    final entries = <DiaryEntry>[];
-    for (final file in files) {
-      try {
-        final jsonMap =
-            jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-        entries.add(DiaryEntry.fromJson(jsonMap));
-      } catch (_) {
-        continue;
-      }
-    }
+    final entries = (await Future.wait(
+      files.map((file) => _readEntryFile(rootDirectory.path, file)),
+    )).whereType<DiaryEntry>().toList();
     entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return entries;
+  }
+
+  Future<DiaryEntry?> _readEntryFile(String rootPath, File file) async {
+    try {
+      final fileName = file.uri.pathSegments.last;
+      if (!fileName.endsWith('.json')) {
+        return null;
+      }
+      final trustedEntryId = fileName.substring(0, fileName.length - 5);
+      if (!SyncFilePolicy.isSafeId(trustedEntryId)) {
+        return null;
+      }
+      final jsonMap =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final entry = DiaryEntry.fromJson(jsonMap);
+      final sanitizedEntry = await _sanitizeLoadedEntry(
+        rootPath: rootPath,
+        trustedEntryId: trustedEntryId,
+        entry: entry,
+      );
+      if (jsonEncode(jsonMap) != jsonEncode(sanitizedEntry.toJson())) {
+        await _writeJsonAtomically(file, sanitizedEntry.toJson());
+      }
+      return sanitizedEntry;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> saveEntries(List<DiaryEntry> entries) async {
@@ -132,11 +154,14 @@ class DiaryStorage {
       await entriesDirectory.create(recursive: true);
     }
 
-    final entryIds = entries.map((entry) => entry.id).toSet();
+    final normalizedEntries = <DiaryEntry>[];
     for (final entry in entries) {
-      final entryFile = File(
-        _join(rootDirectory.path, _entriesDirectoryName, '${entry.id}.json'),
-      );
+      normalizedEntries.add(await _normalizeEntryForSave(entry));
+    }
+
+    final entryIds = normalizedEntries.map((entry) => entry.id).toSet();
+    for (final entry in normalizedEntries) {
+      final entryFile = _entryFileAt(rootDirectory.path, entry.id);
       await _writeJsonAtomically(entryFile, entry.toJson());
     }
 
@@ -154,18 +179,21 @@ class DiaryStorage {
       }
     }
 
-    await _writeManifestCache(entries);
+    await _writeManifestCache(normalizedEntries);
   }
 
   Future<DiaryEntry> saveEntry(DiaryEntry entry) async {
+    final safeEntry = entry.copyWith(
+      id: _normalizeSafeStorageId(entry.id, fallbackPrefix: 'entry'),
+    );
     final existingEntries = await loadEntries();
     final existingIndex = existingEntries.indexWhere(
-      (item) => item.id == entry.id,
+      (item) => item.id == safeEntry.id,
     );
     final previousEntry = existingIndex == -1
         ? null
         : existingEntries[existingIndex];
-    final normalizedEntry = await _normalizeEntryForSave(entry);
+    final normalizedEntry = await _normalizeEntryForSave(safeEntry);
     final entries = existingIndex == -1
         ? [normalizedEntry, ...existingEntries]
         : [
@@ -177,7 +205,13 @@ class DiaryStorage {
           ];
 
     entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    await saveEntries(entries);
+
+    final rootDirectory = await _ensureRootDirectory();
+    await _writeJsonAtomically(
+      _entryFileAt(rootDirectory.path, normalizedEntry.id),
+      normalizedEntry.toJson(),
+    );
+    await _writeManifestCache(entries);
 
     final removedAttachments = _collectRemovedAttachments(
       previousEntry: previousEntry,
@@ -203,11 +237,16 @@ class DiaryStorage {
 
   Future<void> deleteEntry(DiaryEntry entry) async {
     await _moveEntryToDustbin(entry);
+    final rootDirectory = await _ensureRootDirectory();
+    final entryFile = _entryFileAt(rootDirectory.path, entry.id);
+    if (await entryFile.exists()) {
+      await entryFile.delete();
+    }
     final entries = [
       for (final item in await loadEntries())
         if (item.id != entry.id) item,
     ];
-    await saveEntries(entries);
+    await _writeManifestCache(entries);
     await _appendTombstones([
       _entryRelativePath(entry.id),
       ...entry.attachments.expand((attachment) => attachment.storedPaths),
@@ -240,9 +279,27 @@ class DiaryStorage {
     final deletedEntries = <DeletedDiaryEntry>[];
     for (final file in files) {
       try {
+        final fileName = file.uri.pathSegments.last;
+        final trustedEntryId = fileName.endsWith('.json')
+            ? fileName.substring(0, fileName.length - 5)
+            : '';
+        if (!SyncFilePolicy.isSafeId(trustedEntryId)) {
+          continue;
+        }
         final jsonMap =
             jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-        deletedEntries.add(DeletedDiaryEntry.fromJson(jsonMap));
+        final deletedEntry = DeletedDiaryEntry.fromJson(jsonMap);
+        final sanitizedEntry = await _sanitizeLoadedEntry(
+          rootPath: rootDirectory.path,
+          trustedEntryId: trustedEntryId,
+          entry: deletedEntry.entry,
+        );
+        deletedEntries.add(
+          DeletedDiaryEntry(
+            entry: sanitizedEntry,
+            deletedAt: deletedEntry.deletedAt,
+          ),
+        );
       } catch (_) {
         continue;
       }
@@ -253,13 +310,19 @@ class DiaryStorage {
 
   Future<void> restoreDeletedEntry(DeletedDiaryEntry deletedEntry) async {
     final rootDirectory = await _ensureRootDirectory();
-    final restoredEntry = deletedEntry.entry;
+    final safeEntryId = _normalizeSafeStorageId(
+      deletedEntry.entry.id,
+      fallbackPrefix: 'entry',
+    );
+    final restoredEntry = deletedEntry.entry.id == safeEntryId
+        ? deletedEntry.entry
+        : deletedEntry.entry.copyWith(id: safeEntryId);
     final dustbinEntryFile = File(
       _join(
         rootDirectory.path,
         _dustbinDirectoryName,
         _dustbinEntriesDirectoryName,
-        '${restoredEntry.id}.json',
+        '$safeEntryId.json',
       ),
     );
     if (await dustbinEntryFile.exists()) {
@@ -268,11 +331,11 @@ class DiaryStorage {
 
     final dustbinAttachmentsDirectory = _dustbinAttachmentsDirectoryAt(
       rootDirectory.path,
-      restoredEntry.id,
+      safeEntryId,
     );
     final entryAttachmentsDirectory = _entryAttachmentsDirectoryAt(
       rootDirectory.path,
-      restoredEntry.id,
+      safeEntryId,
     );
     if (await dustbinAttachmentsDirectory.exists()) {
       await _deleteDirectoryIfExists(entryAttachmentsDirectory);
@@ -297,12 +360,16 @@ class DiaryStorage {
     DeletedDiaryEntry deletedEntry,
   ) async {
     final rootDirectory = await _ensureRootDirectory();
+    final safeEntryId = _normalizeSafeStorageId(
+      deletedEntry.entry.id,
+      fallbackPrefix: 'entry',
+    );
     final dustbinEntryFile = File(
       _join(
         rootDirectory.path,
         _dustbinDirectoryName,
         _dustbinEntriesDirectoryName,
-        '${deletedEntry.entry.id}.json',
+        '$safeEntryId.json',
       ),
     );
     if (await dustbinEntryFile.exists()) {
@@ -310,7 +377,7 @@ class DiaryStorage {
     }
 
     await _deleteDirectoryIfExists(
-      _dustbinAttachmentsDirectoryAt(rootDirectory.path, deletedEntry.entry.id),
+      _dustbinAttachmentsDirectoryAt(rootDirectory.path, safeEntryId),
     );
     await _appendTombstones([
       _entryRelativePath(deletedEntry.entry.id),
@@ -323,16 +390,29 @@ class DiaryStorage {
   Future<CoupleProfile> loadProfile() async {
     final rootDirectory = await _ensureRootDirectory();
     final profileFile = File(_join(rootDirectory.path, _profileFileName));
+    final localRole = await _loadLocalCurrentUserRole(rootDirectory);
     if (!await profileFile.exists()) {
-      return seedProfile();
+      return seedProfile().copyWith(currentUserRole: localRole);
     }
 
     try {
       final jsonMap =
           jsonDecode(await profileFile.readAsString()) as Map<String, dynamic>;
-      return CoupleProfile.fromJson(jsonMap);
+      final legacyRole = CoupleProfile.currentUserRoleFromJson(jsonMap);
+      final currentUserRole = localRole ?? legacyRole;
+      final profile = CoupleProfile.fromJson(
+        jsonMap,
+        currentUserRole: currentUserRole,
+      );
+      if (localRole == null && legacyRole != null) {
+        await _saveLocalCurrentUserRole(rootDirectory, legacyRole);
+      }
+      if (jsonMap.containsKey('current_user_role')) {
+        await _writeJsonAtomically(profileFile, profile.toJson());
+      }
+      return profile;
     } catch (_) {
-      return seedProfile();
+      return seedProfile().copyWith(currentUserRole: localRole);
     }
   }
 
@@ -340,6 +420,66 @@ class DiaryStorage {
     final rootDirectory = await _ensureRootDirectory();
     final profileFile = File(_join(rootDirectory.path, _profileFileName));
     await _writeJsonAtomically(profileFile, profile.toJson());
+    await _saveLocalCurrentUserRole(rootDirectory, profile.currentUserRole);
+  }
+
+  Future<List<ScheduleItem>> loadSchedules() async {
+    final rootDirectory = await _ensureRootDirectory();
+    final schedulesFile = File(_join(rootDirectory.path, _schedulesFileName));
+    if (!await schedulesFile.exists()) {
+      return const [];
+    }
+
+    try {
+      final raw = jsonDecode(await schedulesFile.readAsString());
+      final rawItems = raw is Map<String, dynamic>
+          ? raw['items'] as List<dynamic>? ?? <dynamic>[]
+          : raw as List<dynamic>? ?? <dynamic>[];
+      final schedules = rawItems
+          .map((item) => ScheduleItem.fromJson(item as Map<String, dynamic>))
+          .where((item) => item.title.trim().isNotEmpty)
+          .toList();
+      schedules.sort(_compareSchedules);
+      return schedules;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> saveSchedules(List<ScheduleItem> schedules) async {
+    final rootDirectory = await _ensureRootDirectory();
+    final schedulesFile = File(_join(rootDirectory.path, _schedulesFileName));
+    final normalizedSchedules = schedules.map(_normalizeSchedule).toList()
+      ..sort(_compareSchedules);
+    await _writeJsonAtomically(schedulesFile, {
+      'version': 1,
+      'items': normalizedSchedules.map((item) => item.toJson()).toList(),
+    });
+  }
+
+  Future<ScheduleItem> saveSchedule(ScheduleItem schedule) async {
+    final schedules = await loadSchedules();
+    final normalizedSchedule = _normalizeSchedule(schedule);
+    final index = schedules.indexWhere((item) => item.id == schedule.id);
+    final nextSchedules = index == -1
+        ? [normalizedSchedule, ...schedules]
+        : [
+            for (var itemIndex = 0; itemIndex < schedules.length; itemIndex++)
+              if (itemIndex == index)
+                normalizedSchedule
+              else
+                schedules[itemIndex],
+          ];
+    await saveSchedules(nextSchedules);
+    return normalizedSchedule;
+  }
+
+  Future<void> deleteSchedule(ScheduleItem schedule) async {
+    final schedules = [
+      for (final item in await loadSchedules())
+        if (item.id != schedule.id) item,
+    ];
+    await saveSchedules(schedules);
   }
 
   Future<Directory> ensureAttachmentsDirectory() async {
@@ -450,16 +590,15 @@ class DiaryStorage {
     final rootDirectory = await _ensureRootDirectory();
     for (final attachment in attachments) {
       for (final storedPath in attachment.storedPaths) {
-        final relativePath = _normalizeStoredPath(storedPath);
-        if (_isAbsolutePath(relativePath)) {
-          final absoluteFile = File(storedPath);
-          if (await absoluteFile.exists()) {
-            await absoluteFile.delete();
-          }
+        final relativePath = _safeStoredAttachmentPath(
+          storedPath,
+          allowDrafts: true,
+        );
+        if (relativePath == null) {
           continue;
         }
 
-        final file = File(_join(rootDirectory.path, relativePath));
+        final file = File(_resolveStoredPath(rootDirectory.path, relativePath));
         if (await file.exists()) {
           await file.delete();
         }
@@ -473,18 +612,17 @@ class DiaryStorage {
 
   Future<String> resolveSyncFileAbsolutePath(String relativePath) async {
     final rootDirectory = await _ensureRootDirectory();
-    return _resolveProtectedSyncPath(rootDirectory.path, relativePath);
+    final safePath = _normalizeSyncBusinessPath(relativePath);
+    return _resolveProtectedSyncPath(rootDirectory.path, safePath);
   }
 
   Future<void> deleteSyncFile(String relativePath) async {
     final rootDirectory = await _ensureRootDirectory();
-    final normalizedPath = _normalizeStoredPath(relativePath);
-    final protectedPath = _normalizeProtectedRelativePath(
-      normalizedPath,
-      allowEmpty: false,
-    );
+    final protectedPath = _normalizeSyncBusinessPath(relativePath);
 
-    final file = File(_resolveProtectedSyncPath(rootDirectory.path, protectedPath));
+    final file = File(
+      _resolveProtectedSyncPath(rootDirectory.path, protectedPath),
+    );
     if (await file.exists()) {
       await file.delete();
     }
@@ -583,7 +721,9 @@ class DiaryStorage {
     SyncProvider provider = SyncProvider.oneDrive,
   ]) async {
     final syncDirectory = await ensureSyncDirectory();
-    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    final stateFile = File(
+      _join(syncDirectory.path, _syncStateFileNameFor(provider)),
+    );
     if (!await stateFile.exists() && provider == SyncProvider.oneDrive) {
       final legacyFile = File(_join(syncDirectory.path, _syncStateFileName));
       if (await legacyFile.exists()) {
@@ -615,7 +755,9 @@ class DiaryStorage {
     SyncProvider provider = SyncProvider.oneDrive,
   ]) async {
     final syncDirectory = await ensureSyncDirectory();
-    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    final stateFile = File(
+      _join(syncDirectory.path, _syncStateFileNameFor(provider)),
+    );
     await _writeJsonAtomically(stateFile, state.toJson());
   }
 
@@ -623,7 +765,9 @@ class DiaryStorage {
     SyncProvider provider = SyncProvider.oneDrive,
   ]) async {
     final syncDirectory = await ensureSyncDirectory();
-    final stateFile = File(_join(syncDirectory.path, _syncStateFileNameFor(provider)));
+    final stateFile = File(
+      _join(syncDirectory.path, _syncStateFileNameFor(provider)),
+    );
     if (await stateFile.exists()) {
       await stateFile.delete();
     }
@@ -649,6 +793,9 @@ class DiaryStorage {
           .map(
             (item) => SyncTombstone.fromJson(Map<String, dynamic>.from(item)),
           )
+          .where(
+            (item) => SyncFilePolicy.isSyncableBusinessPath(item.relativePath),
+          )
           .toList();
     } catch (_) {
       return const [];
@@ -666,8 +813,8 @@ class DiaryStorage {
 
   Future<void> acknowledgeTombstones(List<String> rawPaths) async {
     final relativePaths = rawPaths
-        .map(_normalizeStoredPath)
-        .map((path) => _normalizeProtectedRelativePath(path, allowEmpty: false))
+        .map(_safeSyncBusinessPathOrNull)
+        .whereType<String>()
         .toSet();
     if (relativePaths.isEmpty) {
       return;
@@ -693,12 +840,12 @@ class DiaryStorage {
       final jsonMap =
           jsonDecode(await configFile.readAsString()) as Map<String, dynamic>;
       final config = OneDriveSyncConfig.fromJson(jsonMap);
-      final accessToken = await _readOneDriveSecret(
-        _oneDriveAccessTokenKey,
-      ) ?? jsonMap['access_token'] as String?;
-      final refreshToken = await _readOneDriveSecret(
-        _oneDriveRefreshTokenKey,
-      ) ?? jsonMap['refresh_token'] as String?;
+      final accessToken =
+          await _readOneDriveSecret(_oneDriveAccessTokenKey) ??
+          jsonMap['access_token'] as String?;
+      final refreshToken =
+          await _readOneDriveSecret(_oneDriveRefreshTokenKey) ??
+          jsonMap['refresh_token'] as String?;
       if (accessToken == null ||
           accessToken.isEmpty ||
           refreshToken == null ||
@@ -753,10 +900,7 @@ class DiaryStorage {
       }
 
       final relativePath = _toRelativePath(rootDirectory.path, entity.path);
-      if (_isSyncMetadataFile(relativePath) ||
-          _isDraftFile(relativePath) ||
-          _isCacheFile(relativePath) ||
-          _isDustbinFile(relativePath)) {
+      if (!SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
         continue;
       }
 
@@ -856,12 +1000,25 @@ class DiaryStorage {
       var entryChanged = false;
       final attachments = <DiaryAttachment>[];
       for (final attachment in entry.attachments) {
-        final originalPath = attachment.originalPath;
+        final originalPath = _safeStoredAttachmentPath(attachment.originalPath);
         if (originalPath == null ||
             originalPath.isEmpty ||
             (attachment.previewPath == null &&
                 attachment.thumbnailPath == null)) {
-          attachments.add(attachment);
+          if (attachment.originalPath != originalPath ||
+              attachment.hasLocalOriginal) {
+            attachments.add(
+              attachment.copyWith(
+                clearOriginalPath: originalPath == null,
+                originalPath: originalPath,
+                hasLocalOriginal: false,
+              ),
+            );
+            entryChanged = true;
+            changed = true;
+          } else {
+            attachments.add(attachment);
+          }
           continue;
         }
 
@@ -1022,18 +1179,96 @@ class DiaryStorage {
     await _writeJsonAtomically(manifestFile, manifest);
   }
 
+  Future<DiaryEntry> _sanitizeLoadedEntry({
+    required String rootPath,
+    required String trustedEntryId,
+    required DiaryEntry entry,
+  }) async {
+    final attachments = <DiaryAttachment>[];
+    for (var index = 0; index < entry.attachments.length; index++) {
+      final attachment = await _sanitizeAttachmentForStorage(
+        rootPath: rootPath,
+        attachment: entry.attachments[index],
+        index: index,
+        allowDrafts: false,
+      );
+      if (attachment != null) {
+        attachments.add(attachment);
+      }
+    }
+    return entry.copyWith(id: trustedEntryId, attachments: attachments);
+  }
+
+  Future<DiaryAttachment?> _sanitizeAttachmentForStorage({
+    required String rootPath,
+    required DiaryAttachment attachment,
+    required int index,
+    required bool allowDrafts,
+  }) async {
+    final attachmentId = _normalizeSafeStorageId(
+      attachment.id,
+      fallbackPrefix: 'att_$index',
+    );
+    final thumbnailPath = _safeStoredAttachmentPath(
+      attachment.thumbnailPath,
+      allowDrafts: allowDrafts,
+    );
+    final previewPath = _safeStoredAttachmentPath(
+      attachment.previewPath,
+      allowDrafts: allowDrafts,
+    );
+    final originalPath = _safeStoredAttachmentPath(
+      attachment.originalPath,
+      allowDrafts: allowDrafts,
+    );
+    final path =
+        _safeStoredAttachmentPath(attachment.path, allowDrafts: allowDrafts) ??
+        previewPath ??
+        thumbnailPath ??
+        originalPath;
+
+    if (path == null || path.isEmpty) {
+      return null;
+    }
+
+    final hasLocalOriginal =
+        originalPath != null && await _storedFileExists(rootPath, originalPath);
+    return attachment.copyWith(
+      id: attachmentId,
+      path: path,
+      thumbnailPath: thumbnailPath,
+      previewPath: previewPath,
+      originalPath: originalPath,
+      clearThumbnailPath: thumbnailPath == null,
+      clearPreviewPath: previewPath == null,
+      clearOriginalPath: originalPath == null,
+      hasLocalOriginal: hasLocalOriginal,
+    );
+  }
+
   Future<DiaryEntry> _normalizeEntryForSave(DiaryEntry entry) async {
+    final rootDirectory = await _ensureRootDirectory();
+    final entryId = _normalizeSafeStorageId(entry.id, fallbackPrefix: 'entry');
     final normalizedAttachments = <DiaryAttachment>[];
-    for (final attachment in entry.attachments) {
+    for (var index = 0; index < entry.attachments.length; index++) {
+      final attachment = await _sanitizeAttachmentForStorage(
+        rootPath: rootDirectory.path,
+        attachment: entry.attachments[index],
+        index: index,
+        allowDrafts: true,
+      );
+      if (attachment == null) {
+        continue;
+      }
       normalizedAttachments.add(
         await _normalizeAttachmentForEntry(
-          entryId: entry.id,
+          entryId: entryId,
           attachment: attachment,
         ),
       );
     }
 
-    return entry.copyWith(attachments: normalizedAttachments);
+    return entry.copyWith(id: entryId, attachments: normalizedAttachments);
   }
 
   Future<_AttachmentPreparationResult> _prepareAttachmentForSync({
@@ -1212,7 +1447,12 @@ class DiaryStorage {
         thumbnailPath: thumbnailPath,
         previewPath: previewPath,
         originalPath: originalPath,
-        hasLocalOriginal: originalPath != null && attachment.hasLocalOriginal,
+        clearThumbnailPath: thumbnailPath == null,
+        clearPreviewPath: previewPath == null,
+        clearOriginalPath: originalPath == null,
+        hasLocalOriginal:
+            originalPath != null &&
+            await _storedFileExists(rootDirectory.path, originalPath),
       );
     }
 
@@ -1229,6 +1469,14 @@ class DiaryStorage {
     required String entryId,
     required DiaryAttachment attachment,
   }) async {
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    final safeAttachmentId = _normalizeSafeStorageId(
+      attachment.id,
+      fallbackPrefix: 'att',
+    );
     final extension = _extensionFromFileName(
       attachment.originalName.isEmpty
           ? attachment.path
@@ -1242,15 +1490,24 @@ class DiaryStorage {
       ),
     );
     final targetFileName = sanitizedStem.isEmpty
-        ? '${attachment.id}$extension'
-        : '${attachment.id}_$sanitizedStem$extension';
+        ? '$safeAttachmentId$extension'
+        : '${safeAttachmentId}_$sanitizedStem$extension';
     final targetRelativePath =
-        '$_attachmentsDirectoryName/$entryId/$targetFileName';
+        '$_attachmentsDirectoryName/$safeEntryId/$targetFileName';
     final targetFile = File(
-      _join(rootPath, _attachmentsDirectoryName, entryId, targetFileName),
+      _join(rootPath, _attachmentsDirectoryName, safeEntryId, targetFileName),
     );
-    final currentRelativePath = _normalizeStoredPath(attachment.path);
-    final currentAbsolutePath = _resolveStoredPath(rootPath, attachment.path);
+    final currentRelativePath = _safeStoredAttachmentPath(
+      attachment.path,
+      allowDrafts: true,
+    );
+    if (currentRelativePath == null) {
+      return targetRelativePath;
+    }
+    final currentAbsolutePath = _resolveStoredPath(
+      rootPath,
+      currentRelativePath,
+    );
 
     if (currentRelativePath == targetRelativePath &&
         await targetFile.exists()) {
@@ -1284,17 +1541,37 @@ class DiaryStorage {
       return null;
     }
 
-    final currentRelativePath = _normalizeStoredPath(sourcePath);
+    final currentRelativePath = _safeStoredAttachmentPath(
+      sourcePath,
+      allowDrafts: true,
+    );
+    if (currentRelativePath == null) {
+      return null;
+    }
 
     final currentFileName = _fileNameFromPath(currentRelativePath);
     final extension = _extensionFromFileName(
       currentFileName.isEmpty ? fallbackExtension : currentFileName,
     );
-    final targetFileName = '${attachment.id}$extension';
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    final safeAttachmentId = _normalizeSafeStorageId(
+      attachment.id,
+      fallbackPrefix: 'att',
+    );
+    final targetFileName = '$safeAttachmentId$extension';
     final targetRelativePath =
-        '$_attachmentsDirectoryName/$entryId/$role/$targetFileName';
+        '$_attachmentsDirectoryName/$safeEntryId/$role/$targetFileName';
     final targetFile = File(
-      _join(rootPath, _attachmentsDirectoryName, entryId, role, targetFileName),
+      _join(
+        rootPath,
+        _attachmentsDirectoryName,
+        safeEntryId,
+        role,
+        targetFileName,
+      ),
     );
     await targetFile.parent.create(recursive: true);
 
@@ -1303,9 +1580,9 @@ class DiaryStorage {
       return targetRelativePath;
     }
 
-    final sourceFile = File(_resolveStoredPath(rootPath, sourcePath));
+    final sourceFile = File(_resolveStoredPath(rootPath, currentRelativePath));
     if (!await sourceFile.exists()) {
-      return sourcePath;
+      return currentRelativePath;
     }
 
     if (sourceFile.path != targetFile.path) {
@@ -1335,7 +1612,13 @@ class DiaryStorage {
       if (candidate == null || candidate.isEmpty) {
         continue;
       }
-      final normalized = _normalizeStoredPath(candidate);
+      final normalized = _safeStoredAttachmentPath(
+        candidate,
+        allowDrafts: true,
+      );
+      if (normalized == null) {
+        continue;
+      }
       final file = File(_resolveStoredPath(rootPath, normalized));
       if (await file.exists()) {
         return (normalized, file);
@@ -1345,7 +1628,10 @@ class DiaryStorage {
   }
 
   Future<bool> _storedFileExists(String rootPath, String storedPath) async {
-    final normalized = _normalizeStoredPath(storedPath);
+    final normalized = _safeStoredAttachmentPath(storedPath, allowDrafts: true);
+    if (normalized == null) {
+      return false;
+    }
     return File(_resolveStoredPath(rootPath, normalized)).exists();
   }
 
@@ -1354,7 +1640,10 @@ class DiaryStorage {
     List<String> relativePaths,
   ) async {
     for (final relativePath in relativePaths.toSet()) {
-      final normalized = _normalizeStoredPath(relativePath);
+      final normalized = _safeStoredAttachmentPath(relativePath);
+      if (normalized == null) {
+        continue;
+      }
       final file = File(_resolveStoredPath(rootPath, normalized));
       if (await file.exists()) {
         await file.delete();
@@ -1384,7 +1673,9 @@ class DiaryStorage {
       if (protectedDirectories.contains(normalized)) {
         return;
       }
-      final directory = Directory(_resolveStoredPath(rootPath, normalized));
+      final directory = Directory(
+        _resolveProtectedSyncPath(rootPath, normalized),
+      );
       if (!await directory.exists()) {
         continue;
       }
@@ -1413,8 +1704,16 @@ class DiaryStorage {
     required String role,
     required String extension,
   }) {
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    final safeAttachmentId = _normalizeSafeStorageId(
+      attachmentId,
+      fallbackPrefix: 'att',
+    );
     final safeExtension = extension.isEmpty ? '.jpg' : extension;
-    return '$_attachmentsDirectoryName/$entryId/$role/$attachmentId$safeExtension';
+    return '$_attachmentsDirectoryName/$safeEntryId/$role/$safeAttachmentId$safeExtension';
   }
 
   List<DiaryAttachment> _collectRemovedAttachments({
@@ -1444,16 +1743,24 @@ class DiaryStorage {
   }
 
   Directory _entryAttachmentsDirectoryAt(String rootPath, String entryId) {
-    return Directory(_join(rootPath, _attachmentsDirectoryName, entryId));
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    return Directory(_join(rootPath, _attachmentsDirectoryName, safeEntryId));
   }
 
   Directory _dustbinAttachmentsDirectoryAt(String rootPath, String entryId) {
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
     return Directory(
       _join(
         rootPath,
         _dustbinDirectoryName,
         _dustbinAttachmentsDirectoryName,
-        entryId,
+        safeEntryId,
       ),
     );
   }
@@ -1526,23 +1833,60 @@ class DiaryStorage {
     return relativePath.endsWith('.json');
   }
 
-  bool _isSyncMetadataFile(String relativePath) {
-    return relativePath == '$_syncDirectoryName/$_syncStateFileName' ||
-        relativePath == '$_syncDirectoryName/$_oneDriveSyncStateFileName' ||
-        relativePath == '$_syncDirectoryName/$_tombstonesFileName' ||
-        relativePath == '$_syncDirectoryName/$_oneDriveConfigFileName';
+  ScheduleItem _normalizeSchedule(ScheduleItem schedule) {
+    final title = ScheduleItem.normalizeTitle(schedule.title);
+    final description = schedule.description?.trim();
+    return schedule.copyWith(
+      title: title,
+      description: description == null || description.isEmpty
+          ? null
+          : description,
+      clearDescription: description == null || description.isEmpty,
+      date: DateTime(
+        schedule.date.year,
+        schedule.date.month,
+        schedule.date.day,
+      ),
+    );
   }
 
-  bool _isDraftFile(String relativePath) {
-    return relativePath.startsWith('$_draftsDirectoryName/');
+  int _compareSchedules(ScheduleItem a, ScheduleItem b) {
+    final byDate = a.date.compareTo(b.date);
+    if (byDate != 0) {
+      return byDate;
+    }
+    return a.title.compareTo(b.title);
   }
 
-  bool _isCacheFile(String relativePath) {
-    return relativePath.startsWith('$_cacheDirectoryName/');
+  Future<String?> _loadLocalCurrentUserRole(Directory rootDirectory) async {
+    final settingsFile = File(
+      _join(rootDirectory.path, _localSettingsFileName),
+    );
+    if (!await settingsFile.exists()) {
+      return null;
+    }
+    try {
+      final jsonMap =
+          jsonDecode(await settingsFile.readAsString()) as Map<String, dynamic>;
+      return CoupleProfile.normalizeCurrentUserRole(
+        jsonMap['current_user_role'] as String?,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
-  bool _isDustbinFile(String relativePath) {
-    return relativePath.startsWith('$_dustbinDirectoryName/');
+  Future<void> _saveLocalCurrentUserRole(
+    Directory rootDirectory,
+    String role,
+  ) async {
+    final settingsFile = File(
+      _join(rootDirectory.path, _localSettingsFileName),
+    );
+    await _writeJsonAtomically(settingsFile, {
+      'version': 1,
+      'current_user_role': CoupleProfile.normalizeCurrentUserRole(role),
+    });
   }
 
   String _toRelativePath(String rootPath, String filePath) {
@@ -1553,7 +1897,19 @@ class DiaryStorage {
   }
 
   String _entryRelativePath(String entryId) {
-    return '$_entriesDirectoryName/$entryId.json';
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    return '$_entriesDirectoryName/$safeEntryId.json';
+  }
+
+  File _entryFileAt(String rootPath, String entryId) {
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    return File(_join(rootPath, _entriesDirectoryName, '$safeEntryId.json'));
   }
 
   Future<void> purgeExpiredDustbinEntries() async {
@@ -1583,9 +1939,24 @@ class DiaryStorage {
     for (final file in files) {
       DeletedDiaryEntry deletedEntry;
       try {
+        final fileName = file.uri.pathSegments.last;
+        final trustedEntryId = fileName.endsWith('.json')
+            ? fileName.substring(0, fileName.length - 5)
+            : '';
+        if (!SyncFilePolicy.isSafeId(trustedEntryId)) {
+          continue;
+        }
         final jsonMap =
             jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-        deletedEntry = DeletedDiaryEntry.fromJson(jsonMap);
+        final rawDeletedEntry = DeletedDiaryEntry.fromJson(jsonMap);
+        deletedEntry = DeletedDiaryEntry(
+          entry: await _sanitizeLoadedEntry(
+            rootPath: rootDirectory.path,
+            trustedEntryId: trustedEntryId,
+            entry: rawDeletedEntry.entry,
+          ),
+          deletedAt: rawDeletedEntry.deletedAt,
+        );
       } catch (_) {
         continue;
       }
@@ -1615,9 +1986,8 @@ class DiaryStorage {
 
   Future<void> _appendTombstones(List<String> rawPaths) async {
     final relativePaths = rawPaths
-        .map(_normalizeStoredPath)
-        .map((path) => _normalizeProtectedRelativePath(path))
-        .where((path) => !_isDraftFile(path) && !_isCacheFile(path))
+        .map(_safeSyncBusinessPathOrNull)
+        .whereType<String>()
         .toSet();
     if (relativePaths.isEmpty) {
       return;
@@ -1643,8 +2013,8 @@ class DiaryStorage {
 
   Future<void> _removeTombstones(List<String> rawPaths) async {
     final relativePaths = rawPaths
-        .map(_normalizeStoredPath)
-        .map((path) => _normalizeProtectedRelativePath(path))
+        .map(_safeSyncBusinessPathOrNull)
+        .whereType<String>()
         .toSet();
     if (relativePaths.isEmpty) {
       return;
@@ -1659,26 +2029,33 @@ class DiaryStorage {
 
   Future<void> _moveEntryToDustbin(DiaryEntry entry) async {
     final rootDirectory = await _ensureRootDirectory();
+    final safeEntryId = _normalizeSafeStorageId(
+      entry.id,
+      fallbackPrefix: 'entry',
+    );
+    final safeEntry = entry.id == safeEntryId
+        ? entry
+        : entry.copyWith(id: safeEntryId);
     final dustbinEntryFile = File(
       _join(
         rootDirectory.path,
         _dustbinDirectoryName,
         _dustbinEntriesDirectoryName,
-        '${entry.id}.json',
+        '$safeEntryId.json',
       ),
     );
     await _writeJsonAtomically(
       dustbinEntryFile,
-      DeletedDiaryEntry(entry: entry, deletedAt: nowProvider()).toJson(),
+      DeletedDiaryEntry(entry: safeEntry, deletedAt: nowProvider()).toJson(),
     );
 
     final sourceDirectory = _entryAttachmentsDirectoryAt(
       rootDirectory.path,
-      entry.id,
+      safeEntryId,
     );
     final targetDirectory = _dustbinAttachmentsDirectoryAt(
       rootDirectory.path,
-      entry.id,
+      safeEntryId,
     );
     if (await sourceDirectory.exists()) {
       await _deleteDirectoryIfExists(targetDirectory);
@@ -1707,13 +2084,8 @@ class DiaryStorage {
   }
 
   String _resolveStoredPath(String rootPath, String storedPath) {
-    final normalizedPath = storedPath.replaceAll('\\', '/');
-    if (_isAbsolutePath(normalizedPath)) {
-      return storedPath;
-    }
-
-    final normalizedRoot = rootPath.replaceAll('\\', '/');
-    return '$normalizedRoot/$normalizedPath';
+    final normalizedPath = _normalizeStoredPath(storedPath);
+    return _resolveProtectedSyncPath(rootPath, normalizedPath);
   }
 
   bool _isAbsolutePath(String path) {
@@ -1726,24 +2098,91 @@ class DiaryStorage {
     String storedPath, {
     bool allowEmpty = true,
   }) {
-    final normalized = storedPath.replaceAll('\\', '/').trim();
-    if (normalized.isEmpty) {
-      if (allowEmpty) {
-        return '';
-      }
-      throw const FileSystemException('Sync path must not be empty.');
+    try {
+      return SyncFilePolicy.normalizeRelativePath(
+        storedPath,
+        allowEmpty: allowEmpty,
+      );
+    } on FormatException catch (error) {
+      throw FileSystemException(error.message, storedPath);
     }
-    if (_isAbsolutePath(normalized)) {
-      throw FileSystemException('Refusing absolute sync path: $normalized');
-    }
+  }
 
-    final segments = normalized.split('/');
-    if (segments.any(
-      (segment) => segment.isEmpty || segment == '.' || segment == '..',
-    )) {
-      throw FileSystemException('Refusing unsafe sync path: $normalized');
+  String _normalizeSyncBusinessPath(String relativePath) {
+    try {
+      return SyncFilePolicy.normalizeSyncableBusinessPath(relativePath);
+    } on FormatException catch (error) {
+      throw FileSystemException(error.message, relativePath);
     }
-    return segments.join('/');
+  }
+
+  String? _safeSyncBusinessPathOrNull(String relativePath) {
+    try {
+      return SyncFilePolicy.normalizeSyncableBusinessPath(
+        _normalizeStoredPath(relativePath),
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  String _normalizeSafeStorageId(
+    String rawId, {
+    required String fallbackPrefix,
+  }) {
+    final trimmed = rawId.trim();
+    if (SyncFilePolicy.isSafeId(trimmed)) {
+      return trimmed;
+    }
+    final sanitized = _sanitizeFileName(trimmed);
+    final bounded = sanitized.length > 96
+        ? sanitized.substring(0, 96)
+        : sanitized;
+    if (SyncFilePolicy.isSafeId(bounded)) {
+      return bounded;
+    }
+    return '${fallbackPrefix}_${nowProvider().microsecondsSinceEpoch}';
+  }
+
+  String? _safeStoredAttachmentPath(
+    String? storedPath, {
+    bool allowDrafts = false,
+  }) {
+    if (storedPath == null || storedPath.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final normalized = _normalizeProtectedRelativePath(
+        _normalizeStoredPath(storedPath),
+        allowEmpty: false,
+      );
+      if (_isAttachmentStoragePath(normalized, allowDrafts: allowDrafts)) {
+        return normalized;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  bool _isAttachmentStoragePath(
+    String relativePath, {
+    required bool allowDrafts,
+  }) {
+    if (relativePath.startsWith('$_attachmentsDirectoryName/') &&
+        SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
+      return true;
+    }
+    if (!allowDrafts ||
+        !relativePath.startsWith(
+          '$_draftsDirectoryName/$_draftAttachmentsDirectoryName/',
+        )) {
+      return false;
+    }
+    final segments = relativePath.split('/');
+    return segments.length >= 4 &&
+        segments.every((segment) => segment.isNotEmpty) &&
+        segments.skip(2).every((segment) => segment != '.' && segment != '..');
   }
 
   String _resolveProtectedSyncPath(String rootPath, String relativePath) {

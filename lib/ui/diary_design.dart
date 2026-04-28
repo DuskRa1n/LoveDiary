@@ -17,6 +17,11 @@ class DiaryPalette {
   static const mist = Color(0xFFFFE4DF);
   static const tea = Color(0xFFB87C50);
   static const white = Colors.white;
+
+  static const surfaceStrongAlpha = 0.90;
+  static const surfaceGlassAlpha = 0.72;
+  static const surfaceSoftAlpha = 0.54;
+  static const surfaceBorderAlpha = 0.70;
 }
 
 class DiaryPage extends StatelessWidget {
@@ -96,7 +101,7 @@ class DiaryHero extends StatelessWidget {
     super.key,
     required this.eyebrow,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.trailing,
     this.footer,
     this.quote,
@@ -104,7 +109,7 @@ class DiaryHero extends StatelessWidget {
 
   final String eyebrow;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Widget? trailing;
   final Widget? footer;
   final String? quote;
@@ -185,17 +190,19 @@ class DiaryHero extends StatelessWidget {
                               letterSpacing: -0.8,
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 360),
-                            child: Text(
-                              subtitle,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: DiaryPalette.wine,
-                                height: 1.65,
+                          if (subtitle?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 10),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 360),
+                              child: Text(
+                                subtitle!.trim(),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: DiaryPalette.wine,
+                                  height: 1.65,
+                                ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -257,9 +264,15 @@ class DiaryPanel extends StatelessWidget {
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: DiaryPalette.white.withValues(alpha: 0.84),
+        color: DiaryPalette.white.withValues(
+          alpha: DiaryPalette.surfaceStrongAlpha,
+        ),
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: DiaryPalette.white.withValues(alpha: 0.78)),
+        border: Border.all(
+          color: DiaryPalette.white.withValues(
+            alpha: DiaryPalette.surfaceBorderAlpha,
+          ),
+        ),
         boxShadow: [
           BoxShadow(
             color: DiaryPalette.rose.withValues(alpha: 0.10),
@@ -273,16 +286,75 @@ class DiaryPanel extends StatelessWidget {
   }
 }
 
+class DiaryCompactHeader extends StatelessWidget {
+  const DiaryCompactHeader({
+    super.key,
+    required this.eyebrow,
+    required this.title,
+    this.trailing,
+    this.footer,
+  });
+
+  final String eyebrow;
+  final String title;
+  final Widget? trailing;
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DiaryPanel(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      eyebrow,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: DiaryPalette.rose,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      title,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: DiaryPalette.ink,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+            ],
+          ),
+          if (footer != null) ...[const SizedBox(height: 12), footer!],
+        ],
+      ),
+    );
+  }
+}
+
 class DiarySectionHeader extends StatelessWidget {
   const DiarySectionHeader({
     super.key,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.action,
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Widget? action;
 
   @override
@@ -382,12 +454,12 @@ class DiaryEmptyState extends StatelessWidget {
   const DiaryEmptyState({
     super.key,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.icon = Icons.auto_stories_outlined,
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final IconData icon;
 
   @override
@@ -419,15 +491,17 @@ class DiaryEmptyState extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: DiaryPalette.wine,
-              height: 1.55,
+          if (subtitle?.trim().isNotEmpty == true) ...[
+            const SizedBox(height: 8),
+            Text(
+              subtitle!.trim(),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: DiaryPalette.wine,
+                height: 1.55,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -477,6 +551,7 @@ class DiaryCover extends StatelessWidget {
     }
 
     final file = File(resolveStoredPath(rootDirectoryPath, path));
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
@@ -494,7 +569,11 @@ class DiaryCover extends StatelessWidget {
           file,
           width: width,
           height: height,
+          cacheWidth: _cacheExtentFor(width, devicePixelRatio),
+          cacheHeight: _cacheExtentFor(height, devicePixelRatio),
           fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          gaplessPlayback: true,
           errorBuilder: (_, _, _) => _DiaryCoverPlaceholder(
             count: attachments.length,
             width: width,
@@ -506,6 +585,13 @@ class DiaryCover extends StatelessWidget {
       ),
     );
   }
+}
+
+int? _cacheExtentFor(double? logicalExtent, double devicePixelRatio) {
+  if (logicalExtent == null || !logicalExtent.isFinite || logicalExtent <= 0) {
+    return null;
+  }
+  return (logicalExtent * devicePixelRatio).ceil();
 }
 
 class _DiaryCoverPlaceholder extends StatelessWidget {
@@ -610,72 +696,6 @@ class DiaryStatBlock extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class DiaryActionRow extends StatelessWidget {
-  const DiaryActionRow({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 13),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: DiaryPalette.mist,
-                shape: BoxShape.circle,
-                border: Border.all(color: DiaryPalette.white),
-              ),
-              alignment: Alignment.center,
-              child: Icon(icon, color: DiaryPalette.rose),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: DiaryPalette.ink,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.45,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Icon(Icons.chevron_right_rounded, color: DiaryPalette.wine),
-          ],
-        ),
       ),
     );
   }
