@@ -547,32 +547,22 @@ class _TimelineEntryCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    entry.summary,
-                    maxLines: 5,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: DiaryPalette.wine,
-                      height: 1.58,
-                    ),
-                  ),
-                ),
-                if (entry.attachments.isNotEmpty) ...[
-                  const SizedBox(width: 14),
-                  DiaryCover(
-                    rootDirectoryPath: rootDirectoryPath,
-                    attachments: entry.attachments,
-                    width: 92,
-                    height: 112,
-                    radius: 22,
-                  ),
-                ],
-              ],
+            Text(
+              entry.summary,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: DiaryPalette.wine,
+                height: 1.58,
+              ),
             ),
+            if (entry.attachments.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _TimelineEntryPreview(
+                rootDirectoryPath: rootDirectoryPath,
+                attachments: entry.attachments,
+              ),
+            ],
             const SizedBox(height: 14),
             Wrap(
               spacing: 8,
@@ -599,6 +589,72 @@ class _TimelineEntryCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineEntryPreview extends StatelessWidget {
+  const _TimelineEntryPreview({
+    required this.rootDirectoryPath,
+    required this.attachments,
+  });
+
+  final String? rootDirectoryPath;
+  final List<DiaryAttachment> attachments;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewAttachments = attachments.take(3).toList();
+    final availableWidth = MediaQuery.sizeOf(context).width - 150;
+    final tileSize = ((availableWidth - 16) / 3).clamp(56.0, 82.0).toDouble();
+    return ClipRect(
+      child: SizedBox(
+        height: tileSize,
+        child: Row(
+          children: List.generate(previewAttachments.length, (index) {
+            final remainingCount = attachments.length - 3;
+            return Padding(
+              padding: EdgeInsets.only(
+                right: index == previewAttachments.length - 1 ? 0 : 8,
+              ),
+              child: SizedBox.square(
+                dimension: tileSize,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    DiaryCover(
+                      rootDirectoryPath: rootDirectoryPath,
+                      attachments: [previewAttachments[index]],
+                      width: tileSize,
+                      height: tileSize,
+                      radius: 20,
+                      fit: BoxFit.cover,
+                      showShadow: false,
+                    ),
+                    if (index == 2 && remainingCount > 0)
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: DiaryPalette.ink.withValues(alpha: 0.38),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '+$remainingCount',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: DiaryPalette.white,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }),
         ),
       ),
     );

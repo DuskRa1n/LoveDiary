@@ -178,9 +178,10 @@ class DiarySyncExecutor {
     }
     for (var index = 0; index < sortedActions.length; index++) {
       final action = sortedActions[index];
-      final progress = 0.28 + ((index + 1) / totalActionCount) * 0.54;
+      final startProgress = 0.28 + (index / totalActionCount) * 0.54;
+      final finishedProgress = 0.28 + ((index + 1) / totalActionCount) * 0.54;
       onProgress?.call(
-        progress,
+        startProgress,
         _labelForAction(action, current: index + 1, total: totalActionCount),
       );
       await _yieldToEventLoop();
@@ -221,6 +222,15 @@ class DiarySyncExecutor {
         case SyncActionType.conflict:
           break;
       }
+      onProgress?.call(
+        finishedProgress,
+        _completedLabelForAction(
+          action,
+          current: index + 1,
+          total: totalActionCount,
+        ),
+      );
+      await _yieldToEventLoop();
     }
 
     onProgress?.call(0.9, '刷新同步记录：保存本地和 OneDrive 最新状态');
@@ -388,6 +398,26 @@ class DiarySyncExecutor {
         return '删除云端 $current/$total：$path';
       case SyncActionType.conflict:
         return '冲突 $current/$total：$path';
+    }
+  }
+
+  String _completedLabelForAction(
+    SyncAction action, {
+    required int current,
+    required int total,
+  }) {
+    final path = _compactPath(action.relativePath);
+    switch (action.type) {
+      case SyncActionType.download:
+        return '下载完成 $current/$total：$path';
+      case SyncActionType.upload:
+        return '上传完成 $current/$total：$path';
+      case SyncActionType.deleteLocal:
+        return '本地删除完成 $current/$total：$path';
+      case SyncActionType.deleteRemote:
+        return '云端删除完成 $current/$total：$path';
+      case SyncActionType.conflict:
+        return '冲突待处理 $current/$total：$path';
     }
   }
 

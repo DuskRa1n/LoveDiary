@@ -289,7 +289,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
           scannedFiles++;
         }
         final activityCount = scannedFolders + scannedFiles;
-        if (activityCount != 1 && activityCount % 10 != 0) {
+        if (activityCount != 1 && activityCount % 5 != 0) {
           return;
         }
         final progress = 0.34 + activityCount / (activityCount + 80) * 0.42;

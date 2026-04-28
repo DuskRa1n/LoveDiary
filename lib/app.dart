@@ -197,7 +197,7 @@ class _SyncStatusEntry {
 
 class _LoveDailyShellState extends State<LoveDailyShell> {
   static const Duration _syncExecutionTimeout = Duration(minutes: 12);
-  static const Duration _foregroundUpdateInterval = Duration(milliseconds: 600);
+  static const Duration _foregroundUpdateInterval = Duration(milliseconds: 350);
 
   late final String _startupQuote = randomDailyQuote();
   final ValueNotifier<bool> _writeLockedListenable = ValueNotifier(false);
@@ -259,23 +259,39 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   void _recordSyncStatus(double progress, String label) {
-    _oneDriveSyncProgress = progress;
+    final normalizedProgress = progress.clamp(0, 1).toDouble();
+    _oneDriveSyncProgress = normalizedProgress;
     _oneDriveSyncLabel = label;
     if (_syncStatusHistory.isEmpty ||
         _syncStatusHistory.last.label != label ||
-        _syncStatusHistory.last.progress != progress) {
+        (_syncStatusHistory.last.progress - normalizedProgress).abs() > 0.001) {
       _syncStatusHistory.add(
         _SyncStatusEntry(
           label: label,
-          progress: progress,
+          progress: normalizedProgress,
           recordedAt: DateTime.now(),
         ),
       );
-      if (_syncStatusHistory.length > 24) {
-        _syncStatusHistory.removeAt(0);
+      if (_syncStatusHistory.length > 80) {
+        _syncStatusHistory.removeRange(0, _syncStatusHistory.length - 80);
       }
     }
     _syncStatusRevision.value += 1;
+  }
+
+  List<_SyncStatusEntry> _currentSyncStatusHistory() {
+    final history = List<_SyncStatusEntry>.from(_syncStatusHistory.reversed);
+    final currentLabel = _oneDriveSyncLabel;
+    if (history.isEmpty && currentLabel != null) {
+      history.add(
+        _SyncStatusEntry(
+          label: currentLabel,
+          progress: _oneDriveSyncProgress ?? 0,
+          recordedAt: DateTime.now(),
+        ),
+      );
+    }
+    return history;
   }
 
   Future<void> _updateForegroundSyncStatus({
@@ -1437,107 +1453,114 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _showSyncStatusDetails() async {
-    final startedAt = _syncStartedAt;
-    final history = List<_SyncStatusEntry>.from(_syncStatusHistory.reversed);
-    if (history.isEmpty && _oneDriveSyncLabel != null) {
-      history.add(
-        _SyncStatusEntry(
-          label: _oneDriveSyncLabel!,
-          progress: _oneDriveSyncProgress ?? 0,
-          recordedAt: DateTime.now(),
-        ),
-      );
-    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (context) {
-        final elapsed = startedAt == null
-            ? null
-            : DateTime.now().difference(startedAt).inSeconds;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '同步详情',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: DiaryPalette.ink,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  elapsed == null
-                      ? 'OneDrive 正在同步，当前只锁定写入操作'
-                      : '已运行 ${elapsed}s，当前只锁定写入操作',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: DiaryPalette.wine),
-                ),
-                const SizedBox(height: 14),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 360),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: history.length,
-                    separatorBuilder: (_, _) => const Divider(height: 18),
-                    itemBuilder: (context, index) {
-                      final item = history[index];
-                      final percent = (item.progress.clamp(0, 1) * 100).round();
-                      final elapsedSeconds = startedAt == null
-                          ? null
-                          : item.recordedAt.difference(startedAt).inSeconds;
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          DiaryBadge(
-                            label: '$percent%',
-                            tone: index == 0
-                                ? DiaryBadgeTone.rose
-                                : DiaryBadgeTone.ink,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item.label,
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(
-                                        color: DiaryPalette.wine,
-                                        height: 1.35,
-                                      ),
-                                ),
-                                if (elapsedSeconds != null) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '+${elapsedSeconds}s',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(
-                                          color: DiaryPalette.wine.withValues(
-                                            alpha: 0.68,
-                                          ),
+        return StreamBuilder<int>(
+          stream: Stream.periodic(const Duration(seconds: 1), (value) => value),
+          builder: (context, _) {
+            return ValueListenableBuilder<int>(
+              valueListenable: _syncStatusRevision,
+              builder: (context, _, _) {
+                final startedAt = _syncStartedAt;
+                final history = _currentSyncStatusHistory();
+                final elapsed = startedAt == null
+                    ? null
+                    : DateTime.now().difference(startedAt).inSeconds;
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '同步详情',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: DiaryPalette.ink,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          elapsed == null
+                              ? 'OneDrive 同步记录'
+                              : '已运行 ${elapsed}s，当前只锁定写入操作',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: DiaryPalette.wine),
+                        ),
+                        const SizedBox(height: 14),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 360),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: history.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 18),
+                            itemBuilder: (context, index) {
+                              final item = history[index];
+                              final percent = (item.progress.clamp(0, 1) * 100)
+                                  .round();
+                              final elapsedSeconds = startedAt == null
+                                  ? null
+                                  : item.recordedAt
+                                        .difference(startedAt)
+                                        .inSeconds;
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  DiaryBadge(
+                                    label: '$percent%',
+                                    tone: index == 0
+                                        ? DiaryBadgeTone.rose
+                                        : DiaryBadgeTone.ink,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.label,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: DiaryPalette.wine,
+                                                height: 1.35,
+                                              ),
                                         ),
+                                        if (elapsedSeconds != null) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            '+${elapsedSeconds}s',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color: DiaryPalette.wine
+                                                      .withValues(alpha: 0.68),
+                                                ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
                                   ),
                                 ],
-                              ],
-                            ),
+                              );
+                            },
                           ),
-                        ],
-                      );
-                    },
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -4686,10 +4709,12 @@ class AttachmentGrid extends StatelessWidget {
           },
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
-            child: DiaryAttachmentImage(
-              attachment: attachment,
-              rootDirectoryPath: rootDirectoryPath,
-              fit: BoxFit.cover,
+            child: SizedBox.expand(
+              child: DiaryAttachmentImage(
+                attachment: attachment,
+                rootDirectoryPath: rootDirectoryPath,
+                fit: BoxFit.cover,
+              ),
             ),
           ),
         );
@@ -4741,10 +4766,12 @@ class EditableAttachmentGrid extends StatelessWidget {
               },
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: DiaryAttachmentImage(
-                  attachment: attachment,
-                  rootDirectoryPath: rootDirectoryPath,
-                  fit: BoxFit.cover,
+                child: SizedBox.expand(
+                  child: DiaryAttachmentImage(
+                    attachment: attachment,
+                    rootDirectoryPath: rootDirectoryPath,
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
             ),
@@ -4815,21 +4842,18 @@ class DiaryAttachmentImage extends StatelessWidget {
 
         return Image.file(
           File(resolveStoredPath(rootDirectoryPath, path)),
-          width: width,
-          height: height,
+          width: targetWidth,
+          height: targetHeight,
           fit: fit,
           cacheWidth: preferOriginal
               ? null
               : _attachmentCacheExtent(targetWidth, devicePixelRatio),
-          cacheHeight: preferOriginal
-              ? null
-              : _attachmentCacheExtent(targetHeight, devicePixelRatio),
           filterQuality: preferOriginal
               ? FilterQuality.high
               : FilterQuality.medium,
           gaplessPlayback: true,
           errorBuilder: (_, _, _) =>
-              _AttachmentPlaceholder(width: width, height: height),
+              _AttachmentPlaceholder(width: targetWidth, height: targetHeight),
         );
       },
     );

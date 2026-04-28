@@ -517,6 +517,9 @@ class DiaryCover extends StatelessWidget {
     this.height,
     this.radius = 22,
     this.iconSize = 26,
+    this.fit = BoxFit.cover,
+    this.backgroundColor,
+    this.showShadow = true,
   });
 
   final String? rootDirectoryPath;
@@ -525,6 +528,9 @@ class DiaryCover extends StatelessWidget {
   final double? height;
   final double radius;
   final double iconSize;
+  final BoxFit fit;
+  final Color? backgroundColor;
+  final bool showShadow;
 
   @override
   Widget build(BuildContext context) {
@@ -554,14 +560,17 @@ class DiaryCover extends StatelessWidget {
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
     return DecoratedBox(
       decoration: BoxDecoration(
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(
-            color: DiaryPalette.ink.withValues(alpha: 0.13),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        boxShadow: showShadow
+            ? [
+                BoxShadow(
+                  color: DiaryPalette.ink.withValues(alpha: 0.13),
+                  blurRadius: 18,
+                  offset: const Offset(0, 10),
+                ),
+              ]
+            : null,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
@@ -569,9 +578,8 @@ class DiaryCover extends StatelessWidget {
           file,
           width: width,
           height: height,
-          cacheWidth: _cacheExtentFor(width, devicePixelRatio),
-          cacheHeight: _cacheExtentFor(height, devicePixelRatio),
-          fit: BoxFit.cover,
+          cacheWidth: _cacheExtentFor(width ?? height, devicePixelRatio),
+          fit: fit,
           filterQuality: FilterQuality.medium,
           gaplessPlayback: true,
           errorBuilder: (_, _, _) => _DiaryCoverPlaceholder(
