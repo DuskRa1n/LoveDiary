@@ -1,8 +1,7 @@
 ﻿# LoveDiary
 
-LoveDiary 是一个为两个人长期共同记录生活设计的情侣日记 App。它把日记、评论、图片、纪念日和行程安排放在同一个温柔的时间轴里，并通过 OneDrive 在多台设备之间同步。
+LoveDiary 是一个为两个人长期共同记录生活设计的情侣日记 App。
 
-当前发布重点是 Android，正式包名为 `com.ericchen.lovediary`，当前版本为 `1.2.12+66`。
 
 ## 主要功能
 
@@ -16,8 +15,6 @@ LoveDiary 是一个为两个人长期共同记录生活设计的情侣日记 App
 - OneDrive 同步：支持手动同步、写入后自动同步、前台通知进度、冲突处理和启动恢复。
 
 ## 同步策略
-
-LoveDiary 目前只保留 OneDrive 同步，不再包含 WebDAV / 坚果云入口。
 
 同步逻辑使用稳定的 OneDrive item id 维护远端节点基线，避免依赖不可靠的路径还原。同步执行过程中会写入本地 checkpoint，如果网络中断、App 被杀或前台服务中断，下一次同步会禁用旧的增量基线并做安全刷新，避免用过期状态继续规划上传、下载或删除。
 
@@ -117,17 +114,6 @@ D:\Software\flutter\bin\flutter.bat build apk --release --target-platform androi
 ```text
 build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 ```
-
-## 发布备注
-
-- Android applicationId / namespace：`com.ericchen.lovediary`
-- OneDrive clientId：`add98f89-728e-4e08-9c71-13a546b951bc`
-- Android redirect URI 需要与正式包名和签名哈希匹配。
-- release 构建需要本地配置 `android/key.properties` 和对应 keystore，仓库只保留 `android/key.properties.example`。
-
-## 当前状态
-
-最近一次完整验证：
 
 - `flutter analyze`
 - `flutter test`
