@@ -59,6 +59,9 @@ class DiaryStorage {
   static const MethodChannel _platformPathsChannel = MethodChannel(
     'love_diary/platform_paths',
   );
+  static const MethodChannel _imageCodecChannel = MethodChannel(
+    'love_diary/image_codec',
+  );
   static final SecretStore _defaultSecretStore = FlutterSecretStore();
 
   final String? rootDirectoryPath;
@@ -520,8 +523,8 @@ class DiaryStorage {
         : '${attachmentId}_$sanitizedStem';
     final sourceFile = File(sourcePath);
 
-    final thumbnailFileName = '$fileStem.png';
-    final previewFileName = '$fileStem.png';
+    final thumbnailFileName = '$fileStem.jpg';
+    final previewFileName = '$fileStem.jpg';
     final originalFileName = '$fileStem$extension';
 
     final thumbnailDirectory = Directory(
@@ -543,15 +546,17 @@ class DiaryStorage {
       _join(thumbnailDirectory.path, thumbnailFileName),
     );
     final previewFile = File(_join(previewDirectory.path, previewFileName));
-    await _writeResizedPng(
+    await _writeResizedPhoto(
       sourceFile: sourceFile,
       targetFile: thumbnailFile,
       maxDimension: 360,
+      jpegQuality: 78,
     );
-    await _writeResizedPng(
+    await _writeResizedPhoto(
       sourceFile: sourceFile,
       targetFile: previewFile,
       maxDimension: 1600,
+      jpegQuality: 86,
     );
 
     String? originalPath;
@@ -1308,12 +1313,13 @@ class DiaryStorage {
         entryId: entryId,
         attachmentId: attachment.id,
         role: 'thumbnails',
-        extension: '.png',
+        extension: '.jpg',
       );
-      await _writeResizedPng(
+      await _writeResizedPhoto(
         sourceFile: sourceFile,
         targetFile: File(_resolveStoredPath(rootPath, targetPath)),
         maxDimension: 360,
+        jpegQuality: 78,
       );
       thumbnailPath = targetPath;
       changed = true;
@@ -1326,12 +1332,13 @@ class DiaryStorage {
         entryId: entryId,
         attachmentId: attachment.id,
         role: 'previews',
-        extension: '.png',
+        extension: '.jpg',
       );
-      await _writeResizedPng(
+      await _writeResizedPhoto(
         sourceFile: sourceFile,
         targetFile: File(_resolveStoredPath(rootPath, targetPath)),
         maxDimension: 1600,
+        jpegQuality: 86,
       );
       previewPath = targetPath;
       changed = true;
@@ -2206,6 +2213,51 @@ class DiaryStorage {
     final normalizedRoot = rootPath.replaceAll('\\', '/');
     final normalizedSource = sourcePath.replaceAll('\\', '/');
     return normalizedSource.startsWith(normalizedRoot);
+  }
+
+  Future<void> _writeResizedPhoto({
+    required File sourceFile,
+    required File targetFile,
+    required int maxDimension,
+    required int jpegQuality,
+  }) async {
+    if (await _tryWriteResizedJpeg(
+      sourceFile: sourceFile,
+      targetFile: targetFile,
+      maxDimension: maxDimension,
+      jpegQuality: jpegQuality,
+    )) {
+      return;
+    }
+    await _writeResizedPng(
+      sourceFile: sourceFile,
+      targetFile: targetFile,
+      maxDimension: maxDimension,
+    );
+  }
+
+  Future<bool> _tryWriteResizedJpeg({
+    required File sourceFile,
+    required File targetFile,
+    required int maxDimension,
+    required int jpegQuality,
+  }) async {
+    try {
+      await targetFile.parent.create(recursive: true);
+      final encoded = await _imageCodecChannel
+          .invokeMethod<bool>('resizeToJpeg', {
+            'sourcePath': sourceFile.path,
+            'targetPath': targetFile.path,
+            'maxDimension': maxDimension,
+            'quality': jpegQuality,
+          })
+          .timeout(_imageTransformTimeout);
+      return encoded == true && await targetFile.exists();
+    } on MissingPluginException {
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _writeResizedPng({

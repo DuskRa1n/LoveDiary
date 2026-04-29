@@ -16,6 +16,10 @@ class SyncState {
     this.lastKnownRemoteNodes = const {},
     this.lastFailedAt,
     this.lastFailureMessage,
+    this.incompleteSyncStartedAt,
+    this.incompleteSyncActionCount = 0,
+    this.incompleteSyncCompletedCount = 0,
+    this.incompleteSyncLastPath,
   });
 
   final DateTime? lastSyncedAt;
@@ -26,6 +30,10 @@ class SyncState {
   final Map<String, OneDriveRemoteNode> lastKnownRemoteNodes;
   final DateTime? lastFailedAt;
   final String? lastFailureMessage;
+  final DateTime? incompleteSyncStartedAt;
+  final int incompleteSyncActionCount;
+  final int incompleteSyncCompletedCount;
+  final String? incompleteSyncLastPath;
 
   Map<String, RemoteSyncFile> get lastKnownRemoteFiles {
     return {
@@ -40,8 +48,14 @@ class SyncState {
         lastKnownRemoteNodes.isNotEmpty;
   }
 
+  bool get hasIncompleteSync => incompleteSyncStartedAt != null;
+
+  bool get hasUsablePlanningBaseline {
+    return !hasIncompleteSync && hasCompleteRemoteNodeBaseline;
+  }
+
   bool get canUseDelta {
-    return hasCompleteRemoteNodeBaseline &&
+    return hasUsablePlanningBaseline &&
         (lastKnownRemoteCursor?.isNotEmpty ?? false);
   }
 
@@ -54,10 +68,15 @@ class SyncState {
     Map<String, OneDriveRemoteNode>? lastKnownRemoteNodes,
     DateTime? lastFailedAt,
     String? lastFailureMessage,
+    DateTime? incompleteSyncStartedAt,
+    int? incompleteSyncActionCount,
+    int? incompleteSyncCompletedCount,
+    String? incompleteSyncLastPath,
     bool clearLastSyncedAt = false,
     bool clearLastKnownRemoteCursor = false,
     bool clearLastKnownRemoteRootId = false,
     bool clearLastFailure = false,
+    bool clearIncompleteSync = false,
   }) {
     return SyncState(
       lastSyncedAt: clearLastSyncedAt
@@ -78,6 +97,18 @@ class SyncState {
       lastFailureMessage: clearLastFailure
           ? null
           : lastFailureMessage ?? this.lastFailureMessage,
+      incompleteSyncStartedAt: clearIncompleteSync
+          ? null
+          : incompleteSyncStartedAt ?? this.incompleteSyncStartedAt,
+      incompleteSyncActionCount: clearIncompleteSync
+          ? 0
+          : incompleteSyncActionCount ?? this.incompleteSyncActionCount,
+      incompleteSyncCompletedCount: clearIncompleteSync
+          ? 0
+          : incompleteSyncCompletedCount ?? this.incompleteSyncCompletedCount,
+      incompleteSyncLastPath: clearIncompleteSync
+          ? null
+          : incompleteSyncLastPath ?? this.incompleteSyncLastPath,
     );
   }
 
@@ -94,6 +125,10 @@ class SyncState {
       },
       'last_failed_at': lastFailedAt?.toIso8601String(),
       'last_failure_message': lastFailureMessage,
+      'incomplete_sync_started_at': incompleteSyncStartedAt?.toIso8601String(),
+      'incomplete_sync_action_count': incompleteSyncActionCount,
+      'incomplete_sync_completed_count': incompleteSyncCompletedCount,
+      'incomplete_sync_last_path': incompleteSyncLastPath,
     };
   }
 
@@ -121,6 +156,14 @@ class SyncState {
           ? null
           : DateTime.parse(json['last_failed_at'] as String),
       lastFailureMessage: json['last_failure_message'] as String?,
+      incompleteSyncStartedAt: json['incomplete_sync_started_at'] == null
+          ? null
+          : DateTime.parse(json['incomplete_sync_started_at'] as String),
+      incompleteSyncActionCount:
+          (json['incomplete_sync_action_count'] as num?)?.toInt() ?? 0,
+      incompleteSyncCompletedCount:
+          (json['incomplete_sync_completed_count'] as num?)?.toInt() ?? 0,
+      incompleteSyncLastPath: json['incomplete_sync_last_path'] as String?,
     );
   }
 

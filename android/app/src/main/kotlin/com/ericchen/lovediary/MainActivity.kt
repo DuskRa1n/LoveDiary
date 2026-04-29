@@ -3,12 +3,16 @@ package com.ericchen.lovediary
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.view.Surface
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import java.io.File
+import java.io.FileOutputStream
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -53,6 +57,26 @@ class MainActivity : FlutterActivity() {
                 "stop" -> {
                     stopSyncForegroundService()
                     result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "love_diary/image_codec",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "resizeToJpeg" -> {
+                    val sourcePath = call.argument<String>("sourcePath")
+                    val targetPath = call.argument<String>("targetPath")
+                    val maxDimension = call.argument<Int>("maxDimension") ?: 1600
+                    val quality = call.argument<Int>("quality") ?: 86
+                    if (sourcePath.isNullOrBlank() || targetPath.isNullOrBlank()) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    result.success(resizeToJpeg(sourcePath, targetPath, maxDimension, quality))
                 }
                 else -> result.notImplemented()
             }
@@ -127,6 +151,70 @@ class MainActivity : FlutterActivity() {
             action = SyncForegroundService.ACTION_STOP
         }
         stopService(intent)
+    }
+
+    private fun resizeToJpeg(
+        sourcePath: String,
+        targetPath: String,
+        maxDimension: Int,
+        quality: Int,
+    ): Boolean {
+        return try {
+            val bounds = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(sourcePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                return false
+            }
+
+            val sampleOptions = BitmapFactory.Options().apply {
+                inSampleSize = calculateSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+            }
+            val decoded = BitmapFactory.decodeFile(sourcePath, sampleOptions) ?: return false
+            val longestSide = maxOf(decoded.width, decoded.height)
+            val output = if (longestSide > maxDimension) {
+                val scale = maxDimension.toFloat() / longestSide.toFloat()
+                Bitmap.createScaledBitmap(
+                    decoded,
+                    (decoded.width * scale).toInt().coerceAtLeast(1),
+                    (decoded.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                ).also {
+                    if (it != decoded) {
+                        decoded.recycle()
+                    }
+                }
+            } else {
+                decoded
+            }
+
+            val targetFile = File(targetPath)
+            targetFile.parentFile?.mkdirs()
+            FileOutputStream(targetFile).use { stream ->
+                output.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    quality.coerceIn(60, 95),
+                    stream,
+                )
+            }
+            output.recycle()
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun calculateSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+        var sampleSize = 1
+        var sampledWidth = width
+        var sampledHeight = height
+        while (maxOf(sampledWidth, sampledHeight) / 2 >= maxDimension) {
+            sampleSize *= 2
+            sampledWidth /= 2
+            sampledHeight /= 2
+        }
+        return sampleSize
     }
 
     private fun requestFlutterSurfaceFrameRate() {

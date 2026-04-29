@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/data/diary_storage.dart';
 import 'package:love_diary/models/diary_models.dart';
+import 'package:love_diary/sync/diary_sync_executor.dart';
 import 'package:love_diary/sync/diary_sync_service.dart';
 import 'package:love_diary/sync/sync_models.dart';
 import 'package:love_diary/sync/sync_remote_source.dart';
@@ -39,6 +40,19 @@ class FakeRemoteSource implements DiarySyncRemoteSource {
 
   @override
   Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
+}
+
+class FailingUploadRemoteSource extends FakeRemoteSource {
+  FailingUploadRemoteSource(super.snapshot);
+
+  @override
+  Future<void> uploadFile({
+    required String relativePath,
+    required String absolutePath,
+    required bool isBinary,
+  }) async {
+    throw StateError('upload failed');
+  }
 }
 
 void main() {
@@ -516,5 +530,95 @@ void main() {
     expect(actionPaths, contains('profile.json'));
     expect(actionPaths.any((path) => path.startsWith('drafts/')), isFalse);
     expect(actionPaths.any((path) => path.startsWith('cache/')), isFalse);
+  });
+
+  test('incomplete sync marker disables stale baseline planning', () async {
+    await storage.saveProfile(
+      CoupleProfile(
+        maleName: 'me',
+        femaleName: 'her',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+    );
+
+    final localFile = (await storage.listSyncFiles()).singleWhere(
+      (file) => file.relativePath == 'profile.json',
+    );
+    await storage.saveSyncState(
+      SyncState(
+        lastSyncedAt: DateTime(2026, 4, 9, 9, 0),
+        lastKnownRemoteCursor: 'cursor_stale',
+        lastKnownRemoteRootId: 'root_stale',
+        lastKnownLocalFingerprints: {'profile.json': localFile.fingerprint},
+        lastKnownRemoteRevisions: const {'profile.json': 'rev_stale'},
+        lastKnownRemoteNodes: {
+          'root_stale': const OneDriveRemoteNode(
+            itemId: 'root_stale',
+            parentItemId: null,
+            name: 'love_diary',
+            isFolder: true,
+            relativePath: '',
+          ),
+          'profile_file': OneDriveRemoteNode(
+            itemId: 'profile_file',
+            parentItemId: 'root_stale',
+            name: 'profile.json',
+            isFolder: false,
+            relativePath: 'profile.json',
+            revision: 'rev_stale',
+            fingerprint: localFile.fingerprint,
+            modifiedAt: localFile.modifiedAt,
+            size: localFile.size,
+            isBinary: false,
+          ),
+        },
+        incompleteSyncStartedAt: DateTime(2026, 4, 9, 9, 5),
+        incompleteSyncActionCount: 3,
+        incompleteSyncCompletedCount: 1,
+        incompleteSyncLastPath: 'entries/previous.json',
+      ),
+    );
+
+    final service = DiarySyncService(
+      storage: storage,
+      remoteSource: FakeRemoteSource(
+        const RemoteSyncSnapshot(cursor: null, files: []),
+      ),
+      provider: SyncProvider.oneDrive,
+    );
+
+    final plan = await service.buildPlan();
+
+    expect(plan.actions, hasLength(1));
+    expect(plan.actions.single.type, SyncActionType.upload);
+    expect(plan.actions.single.relativePath, 'profile.json');
+  });
+
+  test('executor leaves checkpoint when a sync action fails', () async {
+    await storage.saveProfile(
+      CoupleProfile(
+        maleName: 'me',
+        femaleName: 'her',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+    );
+
+    final executor = DiarySyncExecutor(
+      storage: storage,
+      remoteSource: FailingUploadRemoteSource(
+        const RemoteSyncSnapshot(cursor: null, files: []),
+      ),
+      provider: SyncProvider.oneDrive,
+    );
+
+    await expectLater(executor.sync(), throwsA(isA<StateError>()));
+
+    final state = await storage.loadSyncState();
+    expect(state.hasIncompleteSync, isTrue);
+    expect(state.canUseDelta, isFalse);
+    expect(state.incompleteSyncActionCount, 1);
+    expect(state.incompleteSyncCompletedCount, 0);
   });
 }

@@ -31,7 +31,7 @@ class DiarySyncService {
       baseline: syncState,
       onProgress: onRemoteProgress,
     );
-    final hasUsableRemoteBaseline = syncState.hasCompleteRemoteNodeBaseline;
+    final hasUsableRemoteBaseline = syncState.hasUsablePlanningBaseline;
     final remoteFiles = remoteSnapshot.files
         .where((file) => attachmentPolicy.includeRemotePath(file.relativePath))
         .toList();

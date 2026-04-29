@@ -440,4 +440,30 @@ void main() {
     expect(find.text('开始记录'), findsOneWidget);
     expect(find.byType(TextFormField), findsNWidgets(2));
   });
+
+  testWidgets('new diary content autosaves into draft', (
+    WidgetTester tester,
+  ) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: 'me',
+        femaleName: 'her',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: const [],
+    );
+
+    await pumpApp(tester, storage);
+    await openActionMenu(tester);
+    await tester.tap(find.byIcon(Icons.edit_note_rounded).last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'autosaved draft body',
+    );
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(storage._draft?.content, 'autosaved draft body');
+  });
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import '../data/diary_storage.dart';
@@ -12,6 +13,7 @@ class SyncExecutionResult {
     required this.deletedRemotePaths,
     required this.deletedLocalPaths,
     required this.conflictPaths,
+    this.conflictDetails = const [],
   });
 
   final List<String> uploadedPaths;
@@ -19,6 +21,7 @@ class SyncExecutionResult {
   final List<String> deletedRemotePaths;
   final List<String> deletedLocalPaths;
   final List<String> conflictPaths;
+  final List<SyncConflictDetail> conflictDetails;
 
   bool get hasConflicts => conflictPaths.isNotEmpty;
 
@@ -27,6 +30,40 @@ class SyncExecutionResult {
       downloadedPaths.length +
       deletedRemotePaths.length +
       deletedLocalPaths.length;
+}
+
+class SyncConflictSidePreview {
+  const SyncConflictSidePreview({
+    required this.modifiedAt,
+    required this.size,
+    required this.isBinary,
+    this.revision,
+    this.title,
+    this.contentPreview,
+    this.mood,
+  });
+
+  final DateTime modifiedAt;
+  final int size;
+  final bool isBinary;
+  final String? revision;
+  final String? title;
+  final String? contentPreview;
+  final String? mood;
+}
+
+class SyncConflictDetail {
+  const SyncConflictDetail({
+    required this.relativePath,
+    required this.reason,
+    this.local,
+    this.remote,
+  });
+
+  final String relativePath;
+  final String? reason;
+  final SyncConflictSidePreview? local;
+  final SyncConflictSidePreview? remote;
 }
 
 class SyncSafetyPolicy {
@@ -122,6 +159,8 @@ class DiarySyncExecutor {
   final AttachmentSyncPolicy attachmentPolicy;
 
   Future<SyncExecutionResult> sync() async {
+    final stateAtStart = await storage.loadSyncState(provider);
+    final forceFullRefresh = stateAtStart.hasIncompleteSync;
     onProgress?.call(0.04, '准备同步：整理本地附件');
     await _yieldToEventLoop();
     await storage.prepareFilesForSync();
@@ -152,6 +191,18 @@ class DiarySyncExecutor {
         .toList();
 
     if (conflictPaths.isNotEmpty) {
+      final conflictActions = sortedActions
+          .where((action) => action.type == SyncActionType.conflict)
+          .toList();
+      final conflictDetails = await _buildConflictDetails(
+        actions: conflictActions,
+        localByPath: {
+          for (final file in plan.localFiles) file.relativePath: file,
+        },
+        remoteByPath: {
+          for (final file in plan.remoteFiles) file.relativePath: file,
+        },
+      );
       onProgress?.call(1, '发现 ${conflictPaths.length} 个冲突，等待手动处理');
       return SyncExecutionResult(
         uploadedPaths: const [],
@@ -159,6 +210,7 @@ class DiarySyncExecutor {
         deletedRemotePaths: const [],
         deletedLocalPaths: const [],
         conflictPaths: conflictPaths,
+        conflictDetails: conflictDetails,
       );
     }
 
@@ -175,6 +227,12 @@ class DiarySyncExecutor {
     final totalActionCount = sortedActions.isEmpty ? 1 : sortedActions.length;
     if (sortedActions.isEmpty) {
       onProgress?.call(0.82, '没有需要传输的文件，正在确认同步记录');
+    }
+    if (sortedActions.isNotEmpty) {
+      await _markSyncIncomplete(
+        totalActions: sortedActions.length,
+        completedActions: 0,
+      );
     }
     for (var index = 0; index < sortedActions.length; index++) {
       final action = sortedActions[index];
@@ -230,12 +288,20 @@ class DiarySyncExecutor {
           total: totalActionCount,
         ),
       );
+      await _markSyncIncomplete(
+        totalActions: sortedActions.length,
+        completedActions: index + 1,
+        lastPath: action.relativePath,
+      );
       await _yieldToEventLoop();
     }
 
     onProgress?.call(0.9, '刷新同步记录：保存本地和 OneDrive 最新状态');
     await _yieldToEventLoop();
-    await _refreshSyncState(deletedRemotePaths: deletedRemotePaths);
+    await _refreshSyncState(
+      deletedRemotePaths: deletedRemotePaths,
+      forceFullScan: forceFullRefresh,
+    );
     onProgress?.call(
       1,
       '同步完成：上传 ${uploadedPaths.length}，下载 ${downloadedPaths.length}，云端删除 ${deletedRemotePaths.length}，本地删除 ${deletedLocalPaths.length}',
@@ -250,6 +316,80 @@ class DiarySyncExecutor {
     );
   }
 
+  Future<List<SyncConflictDetail>> _buildConflictDetails({
+    required List<SyncAction> actions,
+    required Map<String, LocalSyncFile> localByPath,
+    required Map<String, RemoteSyncFile> remoteByPath,
+  }) async {
+    final details = <SyncConflictDetail>[];
+    for (final action in actions) {
+      details.add(
+        SyncConflictDetail(
+          relativePath: action.relativePath,
+          reason: action.reason,
+          local: await _localConflictPreview(localByPath[action.relativePath]),
+          remote: _remoteConflictPreview(remoteByPath[action.relativePath]),
+        ),
+      );
+    }
+    return details;
+  }
+
+  Future<SyncConflictSidePreview?> _localConflictPreview(
+    LocalSyncFile? file,
+  ) async {
+    if (file == null) {
+      return null;
+    }
+    if (!_isEntryJsonPath(file.relativePath)) {
+      return SyncConflictSidePreview(
+        modifiedAt: file.modifiedAt,
+        size: file.size,
+        isBinary: file.isBinary,
+      );
+    }
+
+    try {
+      final payload =
+          jsonDecode(await File(file.absolutePath).readAsString())
+              as Map<String, dynamic>;
+      final content = (payload['content'] as String? ?? '').trim();
+      return SyncConflictSidePreview(
+        modifiedAt: file.modifiedAt,
+        size: file.size,
+        isBinary: false,
+        title: (payload['title'] as String? ?? '').trim(),
+        contentPreview: _compactText(content),
+        mood: (payload['mood'] as String? ?? '').trim(),
+      );
+    } catch (_) {
+      return SyncConflictSidePreview(
+        modifiedAt: file.modifiedAt,
+        size: file.size,
+        isBinary: file.isBinary,
+      );
+    }
+  }
+
+  SyncConflictSidePreview? _remoteConflictPreview(RemoteSyncFile? file) {
+    if (file == null) {
+      return null;
+    }
+    return SyncConflictSidePreview(
+      modifiedAt: file.modifiedAt,
+      size: file.size,
+      isBinary: file.isBinary,
+      revision: file.revision,
+    );
+  }
+
+  String _compactText(String value) {
+    if (value.length <= 64) {
+      return value;
+    }
+    return '${value.substring(0, 64)}...';
+  }
+
   Future<void> resolveConflicts({
     required Map<String, bool> preferLocalByPath,
   }) async {
@@ -257,22 +397,41 @@ class DiarySyncExecutor {
       return;
     }
 
+    final stateAtStart = await storage.loadSyncState(provider);
+    final forceFullRefresh = stateAtStart.hasIncompleteSync;
     final localFiles = await storage.listSyncFiles();
     final localByPath = {
       for (final file in localFiles) file.relativePath: file,
     };
 
+    await _markSyncIncomplete(
+      totalActions: preferLocalByPath.length,
+      completedActions: 0,
+    );
+    var completedActions = 0;
     for (final entry in preferLocalByPath.entries) {
       final relativePath = entry.key;
       if (entry.value) {
         final localFile = localByPath[relativePath];
         if (localFile == null) {
+          completedActions++;
+          await _markSyncIncomplete(
+            totalActions: preferLocalByPath.length,
+            completedActions: completedActions,
+            lastPath: relativePath,
+          );
           continue;
         }
         await remoteSource.uploadFile(
           relativePath: localFile.relativePath,
           absolutePath: localFile.absolutePath,
           isBinary: localFile.isBinary,
+        );
+        completedActions++;
+        await _markSyncIncomplete(
+          totalActions: preferLocalByPath.length,
+          completedActions: completedActions,
+          lastPath: relativePath,
         );
         continue;
       }
@@ -286,9 +445,15 @@ class DiarySyncExecutor {
         targetAbsolutePath: targetAbsolutePath,
         isBinary: !_isJsonPath(relativePath),
       );
+      completedActions++;
+      await _markSyncIncomplete(
+        totalActions: preferLocalByPath.length,
+        completedActions: completedActions,
+        lastPath: relativePath,
+      );
     }
 
-    await _refreshSyncState();
+    await _refreshSyncState(forceFullScan: forceFullRefresh);
   }
 
   void _enforceSafety(List<SyncAction> actions) {
@@ -440,6 +605,10 @@ class DiarySyncExecutor {
     return relativePath.endsWith('.json');
   }
 
+  bool _isEntryJsonPath(String relativePath) {
+    return relativePath.startsWith('entries/') && _isJsonPath(relativePath);
+  }
+
   Future<void> _yieldToEventLoop() => Future<void>.delayed(Duration.zero);
 
   Future<void> _ensureParentDirectory(String filePath) async {
@@ -452,13 +621,20 @@ class DiarySyncExecutor {
 
   Future<void> _refreshSyncState({
     List<String> deletedRemotePaths = const [],
+    bool forceFullScan = false,
   }) async {
     final refreshedLocalFiles = (await storage.listSyncFiles())
         .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
         .toList();
     await remoteSource.persistSnapshot(refreshedLocalFiles);
+    final currentBaseline = await storage.loadSyncState(provider);
     final refreshedRemoteSnapshot = await remoteSource.fetchSnapshot(
-      baseline: await storage.loadSyncState(provider),
+      baseline: forceFullScan
+          ? currentBaseline.copyWith(
+              incompleteSyncStartedAt:
+                  currentBaseline.incompleteSyncStartedAt ?? DateTime.now(),
+            )
+          : currentBaseline.copyWith(clearIncompleteSync: true),
       onProgress: (remoteProgress, label) {
         final mappedProgress = 0.92 + remoteProgress.clamp(0, 1) * 0.06;
         onProgress?.call(mappedProgress, '刷新记录：$label');
@@ -485,5 +661,23 @@ class DiarySyncExecutor {
     if (deletedRemotePaths.isNotEmpty) {
       await storage.acknowledgeTombstones(deletedRemotePaths);
     }
+  }
+
+  Future<void> _markSyncIncomplete({
+    required int totalActions,
+    required int completedActions,
+    String? lastPath,
+  }) async {
+    final currentState = await storage.loadSyncState(provider);
+    final startedAt = currentState.incompleteSyncStartedAt ?? DateTime.now();
+    await storage.saveSyncState(
+      currentState.copyWith(
+        incompleteSyncStartedAt: startedAt,
+        incompleteSyncActionCount: totalActions,
+        incompleteSyncCompletedCount: completedActions,
+        incompleteSyncLastPath: lastPath,
+      ),
+      provider,
+    );
   }
 }

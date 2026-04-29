@@ -453,6 +453,8 @@ void main() {
       ).existsSync(),
       isTrue,
     );
+    expect(savedEntry.attachments.single.thumbnailPath, endsWith('.jpg'));
+    expect(savedEntry.attachments.single.previewPath, endsWith('.jpg'));
   });
 
   test(
