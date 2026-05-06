@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -50,7 +52,7 @@ class _AttachmentPreparationResult {
 }
 
 class DiaryStorage {
-  const DiaryStorage({
+  DiaryStorage({
     this.rootDirectoryPath,
     this.nowProvider = DateTime.now,
     SecretStore? secretStore,
@@ -67,6 +69,8 @@ class DiaryStorage {
   final String? rootDirectoryPath;
   final DateTime Function() nowProvider;
   final SecretStore? _secretStoreOverride;
+  bool _hasPurgedDustbin = false;
+  Directory? _cachedRootDirectory;
 
   static const _profileFileName = 'profile.json';
   static const _localSettingsFileName = 'local_settings.json';
@@ -94,7 +98,8 @@ class DiaryStorage {
   SecretStore get _secretStore => _secretStoreOverride ?? _defaultSecretStore;
 
   Future<List<DiaryEntry>> loadEntries() async {
-    await purgeExpiredDustbinEntries();
+    // 回收站清理放到后台，不阻塞主加载
+    unawaited(_purgeDustbinIfNeeded());
     final rootDirectory = await _ensureRootDirectory();
     final entriesDirectory = Directory(
       _join(rootDirectory.path, _entriesDirectoryName),
@@ -139,13 +144,29 @@ class DiaryStorage {
         trustedEntryId: trustedEntryId,
         entry: entry,
       );
-      if (jsonEncode(jsonMap) != jsonEncode(sanitizedEntry.toJson())) {
+      if (sanitizedEntry.id != entry.id ||
+          !_attachmentsEqual(sanitizedEntry.attachments, entry.attachments)) {
         await _writeJsonAtomically(file, sanitizedEntry.toJson());
       }
       return sanitizedEntry;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('读取条目文件失败: $error\n$stackTrace');
       return null;
     }
+  }
+
+  bool _attachmentsEqual(List<DiaryAttachment> a, List<DiaryAttachment> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].path != b[i].path ||
+          a[i].thumbnailPath != b[i].thumbnailPath ||
+          a[i].previewPath != b[i].previewPath ||
+          a[i].originalPath != b[i].originalPath) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> saveEntries(List<DiaryEntry> entries) async {
@@ -189,33 +210,25 @@ class DiaryStorage {
     final safeEntry = entry.copyWith(
       id: _normalizeSafeStorageId(entry.id, fallbackPrefix: 'entry'),
     );
-    final existingEntries = await loadEntries();
-    final existingIndex = existingEntries.indexWhere(
-      (item) => item.id == safeEntry.id,
-    );
-    final previousEntry = existingIndex == -1
-        ? null
-        : existingEntries[existingIndex];
     final normalizedEntry = await _normalizeEntryForSave(safeEntry);
-    final entries = existingIndex == -1
-        ? [normalizedEntry, ...existingEntries]
-        : [
-            for (var index = 0; index < existingEntries.length; index++)
-              if (index == existingIndex)
-                normalizedEntry
-              else
-                existingEntries[index],
-          ];
-
-    entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
     final rootDirectory = await _ensureRootDirectory();
+
+    // 读取单个条目而非全部条目
+    final previousEntry = await _readSingleEntry(
+      rootDirectory.path,
+      normalizedEntry.id,
+    );
+
+    // 写入当前条目文件
     await _writeJsonAtomically(
       _entryFileAt(rootDirectory.path, normalizedEntry.id),
       normalizedEntry.toJson(),
     );
-    await _writeManifestCache(entries);
 
+    // 更新manifest缓存（增量方式）
+    await _updateManifestCacheEntry(rootDirectory.path, normalizedEntry);
+
+    // 清理附件
     final removedAttachments = _collectRemovedAttachments(
       previousEntry: previousEntry,
       nextEntry: normalizedEntry,
@@ -245,11 +258,7 @@ class DiaryStorage {
     if (await entryFile.exists()) {
       await entryFile.delete();
     }
-    final entries = [
-      for (final item in await loadEntries())
-        if (item.id != entry.id) item,
-    ];
-    await _writeManifestCache(entries);
+    await _removeManifestCacheEntry(rootDirectory.path, entry.id);
     await _appendTombstones([
       _entryRelativePath(entry.id),
       ...entry.attachments.expand((attachment) => attachment.storedPaths),
@@ -257,7 +266,7 @@ class DiaryStorage {
   }
 
   Future<List<DeletedDiaryEntry>> loadDustbinEntries() async {
-    await purgeExpiredDustbinEntries();
+    await _purgeDustbinIfNeeded();
     final rootDirectory = await _ensureRootDirectory();
     final dustbinEntriesDirectory = Directory(
       _join(
@@ -303,7 +312,8 @@ class DiaryStorage {
             deletedAt: deletedEntry.deletedAt,
           ),
         );
-      } catch (_) {
+      } catch (error) {
+        debugPrint('读取回收站条目失败: $error');
         continue;
       }
     }
@@ -345,12 +355,12 @@ class DiaryStorage {
       await dustbinAttachmentsDirectory.rename(entryAttachmentsDirectory.path);
     }
 
-    final entries = [
-      for (final item in await loadEntries())
-        if (item.id != restoredEntry.id) item,
-      restoredEntry,
-    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    await saveEntries(entries);
+    // 增量写入，不需要加载全部条目
+    await _writeJsonAtomically(
+      _entryFileAt(rootDirectory.path, restoredEntry.id),
+      restoredEntry.toJson(),
+    );
+    await _updateManifestCacheEntry(rootDirectory.path, restoredEntry);
     await _removeTombstones([
       _entryRelativePath(restoredEntry.id),
       ...restoredEntry.attachments.expand(
@@ -414,7 +424,8 @@ class DiaryStorage {
         await _writeJsonAtomically(profileFile, profile.toJson());
       }
       return profile;
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载个人资料失败: $error');
       return seedProfile().copyWith(currentUserRole: localRole);
     }
   }
@@ -444,7 +455,8 @@ class DiaryStorage {
           .toList();
       schedules.sort(_compareSchedules);
       return schedules;
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载日程失败: $error');
       return const [];
     }
   }
@@ -611,6 +623,66 @@ class DiaryStorage {
     }
   }
 
+  Future<void> ensureLocalThumbnails(DiaryAttachment attachment) async {
+    final rootDirectory = await _ensureRootDirectory();
+    final rootPath = rootDirectory.path;
+
+    final originalPath = _safeStoredAttachmentPath(attachment.originalPath);
+    if (originalPath == null || originalPath.isEmpty) {
+      return;
+    }
+
+    final originalFile = File(_resolveStoredPath(rootPath, originalPath));
+    if (!await originalFile.exists()) {
+      return;
+    }
+
+    final thumbnailPath = _safeStoredAttachmentPath(attachment.thumbnailPath);
+    final previewPath = _safeStoredAttachmentPath(attachment.previewPath);
+
+    if (thumbnailPath == null ||
+        thumbnailPath.isEmpty ||
+        !await _storedFileExists(rootPath, thumbnailPath)) {
+      final segments = originalPath.split('/');
+      final entryId = segments.length >= 2 ? segments[1] : 'unknown';
+      final attachmentId = attachment.id;
+      final ext = _extensionFromFileName(
+        attachment.originalName.isEmpty
+            ? originalPath
+            : attachment.originalName,
+      );
+      final targetPath =
+          '$_attachmentsDirectoryName/$entryId/$attachmentId/thumbnails/thumb$ext';
+      await _writeResizedPhoto(
+        sourceFile: originalFile,
+        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
+        maxDimension: 360,
+        jpegQuality: 78,
+      );
+    }
+
+    if (previewPath == null ||
+        previewPath.isEmpty ||
+        !await _storedFileExists(rootPath, previewPath)) {
+      final segments = originalPath.split('/');
+      final entryId = segments.length >= 2 ? segments[1] : 'unknown';
+      final attachmentId = attachment.id;
+      final ext = _extensionFromFileName(
+        attachment.originalName.isEmpty
+            ? originalPath
+            : attachment.originalName,
+      );
+      final targetPath =
+          '$_attachmentsDirectoryName/$entryId/$attachmentId/previews/preview$ext';
+      await _writeResizedPhoto(
+        sourceFile: originalFile,
+        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
+        maxDimension: 1600,
+        jpegQuality: 86,
+      );
+    }
+  }
+
   Future<Directory> resolveRootDirectory() async {
     return _ensureRootDirectory();
   }
@@ -659,7 +731,8 @@ class DiaryStorage {
       final jsonMap =
           jsonDecode(await draftFile.readAsString()) as Map<String, dynamic>;
       return DiaryDraft.fromJson(jsonMap);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载草稿失败: $error');
       return null;
     }
   }
@@ -737,7 +810,8 @@ class DiaryStorage {
               jsonDecode(await legacyFile.readAsString())
                   as Map<String, dynamic>;
           return SyncState.fromJson(jsonMap);
-        } catch (_) {
+        } catch (error) {
+          debugPrint('加载旧版同步状态失败: $error');
           return SyncState.initial();
         }
       }
@@ -750,7 +824,8 @@ class DiaryStorage {
       final jsonMap =
           jsonDecode(await stateFile.readAsString()) as Map<String, dynamic>;
       return SyncState.fromJson(jsonMap);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载同步状态失败: $error');
       return SyncState.initial();
     }
   }
@@ -802,7 +877,8 @@ class DiaryStorage {
             (item) => SyncFilePolicy.isSyncableBusinessPath(item.relativePath),
           )
           .toList();
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载tombstones失败: $error');
       return const [];
     }
   }
@@ -870,7 +946,8 @@ class DiaryStorage {
         accessToken: accessToken,
         refreshToken: refreshToken,
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载OneDrive配置失败: $error');
       return null;
     }
   }
@@ -895,7 +972,7 @@ class DiaryStorage {
   }
 
   Future<List<LocalSyncFile>> listSyncFiles() async {
-    await purgeExpiredDustbinEntries();
+    await _purgeDustbinIfNeeded();
     final rootDirectory = await _ensureRootDirectory();
     final files = <LocalSyncFile>[];
 
@@ -1071,6 +1148,11 @@ class DiaryStorage {
   }
 
   Future<Directory> _ensureRootDirectory() async {
+    final cached = _cachedRootDirectory;
+    if (cached != null && await cached.exists()) {
+      return cached;
+    }
+
     final directory = rootDirectoryPath == null
         ? Directory(
             _join((await _resolveApplicationDocumentsPath()), 'love_diary'),
@@ -1081,68 +1163,27 @@ class DiaryStorage {
       await directory.create(recursive: true);
     }
 
-    final entriesDirectory = Directory(
-      _join(directory.path, _entriesDirectoryName),
+    final subdirectories = [
+      _entriesDirectoryName,
+      _attachmentsDirectoryName,
+      _cacheDirectoryName,
+      _draftsDirectoryName,
+      _dustbinDirectoryName,
+      _join(_dustbinDirectoryName, _dustbinEntriesDirectoryName),
+      _join(_dustbinDirectoryName, _dustbinAttachmentsDirectoryName),
+      _syncDirectoryName,
+    ];
+
+    await Future.wait(
+      subdirectories.map((sub) async {
+        final subDir = Directory(_join(directory.path, sub));
+        if (!await subDir.exists()) {
+          await subDir.create(recursive: true);
+        }
+      }),
     );
-    if (!await entriesDirectory.exists()) {
-      await entriesDirectory.create(recursive: true);
-    }
 
-    final attachmentsDirectory = Directory(
-      _join(directory.path, _attachmentsDirectoryName),
-    );
-    if (!await attachmentsDirectory.exists()) {
-      await attachmentsDirectory.create(recursive: true);
-    }
-
-    final cacheDirectory = Directory(
-      _join(directory.path, _cacheDirectoryName),
-    );
-    if (!await cacheDirectory.exists()) {
-      await cacheDirectory.create(recursive: true);
-    }
-
-    final draftsDirectory = Directory(
-      _join(directory.path, _draftsDirectoryName),
-    );
-    if (!await draftsDirectory.exists()) {
-      await draftsDirectory.create(recursive: true);
-    }
-
-    final dustbinDirectory = Directory(
-      _join(directory.path, _dustbinDirectoryName),
-    );
-    if (!await dustbinDirectory.exists()) {
-      await dustbinDirectory.create(recursive: true);
-    }
-
-    final dustbinEntriesDirectory = Directory(
-      _join(
-        directory.path,
-        _dustbinDirectoryName,
-        _dustbinEntriesDirectoryName,
-      ),
-    );
-    if (!await dustbinEntriesDirectory.exists()) {
-      await dustbinEntriesDirectory.create(recursive: true);
-    }
-
-    final dustbinAttachmentsDirectory = Directory(
-      _join(
-        directory.path,
-        _dustbinDirectoryName,
-        _dustbinAttachmentsDirectoryName,
-      ),
-    );
-    if (!await dustbinAttachmentsDirectory.exists()) {
-      await dustbinAttachmentsDirectory.create(recursive: true);
-    }
-
-    final syncDirectory = Directory(_join(directory.path, _syncDirectoryName));
-    if (!await syncDirectory.exists()) {
-      await syncDirectory.create(recursive: true);
-    }
-
+    _cachedRootDirectory = directory;
     return directory;
   }
 
@@ -1155,7 +1196,8 @@ class DiaryStorage {
         if (path != null && path.isNotEmpty) {
           return path;
         }
-      } catch (_) {
+      } catch (error) {
+        debugPrint('获取Android文档路径失败: $error');
         // Fall back to path_provider below.
       }
     }
@@ -1184,6 +1226,92 @@ class DiaryStorage {
     await _writeJsonAtomically(manifestFile, manifest);
   }
 
+  Future<DiaryEntry?> _readSingleEntry(String rootPath, String entryId) async {
+    final file = _entryFileAt(rootPath, entryId);
+    if (!await file.exists()) {
+      return null;
+    }
+    return _readEntryFile(rootPath, file);
+  }
+
+  Future<void> _updateManifestCacheEntry(
+    String rootPath,
+    DiaryEntry entry,
+  ) async {
+    final manifestFile = File(
+      _join(rootPath, _cacheDirectoryName, _manifestFileName),
+    );
+
+    Map<String, dynamic> manifest;
+    if (await manifestFile.exists()) {
+      try {
+        manifest =
+            jsonDecode(await manifestFile.readAsString())
+                as Map<String, dynamic>;
+      } catch (error) {
+        debugPrint('读取manifest缓存失败: $error');
+        manifest = {'version': 2, 'entries': []};
+      }
+    } else {
+      manifest = {'version': 2, 'entries': []};
+    }
+
+    final entries = (manifest['entries'] as List<dynamic>? ?? [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+
+    final index = entries.indexWhere((item) => item['id'] == entry.id);
+    final entryData = {
+      'id': entry.id,
+      'created_at': entry.createdAt.toIso8601String(),
+      'updated_at': entry.updatedAt?.toIso8601String(),
+    };
+
+    if (index == -1) {
+      entries.insert(0, entryData);
+    } else {
+      entries[index] = entryData;
+    }
+
+    // 按创建时间排序
+    entries.sort((a, b) {
+      final aTime = DateTime.parse(a['created_at'] as String);
+      final bTime = DateTime.parse(b['created_at'] as String);
+      return bTime.compareTo(aTime);
+    });
+
+    manifest['entries'] = entries;
+    manifest['generated_at'] = DateTime.now().toIso8601String();
+    await _writeJsonAtomically(manifestFile, manifest);
+  }
+
+  Future<void> _removeManifestCacheEntry(
+    String rootPath,
+    String entryId,
+  ) async {
+    final manifestFile = File(
+      _join(rootPath, _cacheDirectoryName, _manifestFileName),
+    );
+
+    if (!await manifestFile.exists()) {
+      return;
+    }
+
+    try {
+      final manifest =
+          jsonDecode(await manifestFile.readAsString()) as Map<String, dynamic>;
+      final entries = (manifest['entries'] as List<dynamic>? ?? [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .where((item) => item['id'] != entryId)
+          .toList();
+      manifest['entries'] = entries;
+      manifest['generated_at'] = DateTime.now().toIso8601String();
+      await _writeJsonAtomically(manifestFile, manifest);
+    } catch (error) {
+      debugPrint('移除manifest缓存条目失败: $error');
+    }
+  }
+
   Future<DiaryEntry> _sanitizeLoadedEntry({
     required String rootPath,
     required String trustedEntryId,
@@ -1198,6 +1326,8 @@ class DiaryStorage {
         allowDrafts: false,
       );
       if (attachment != null) {
+        // 如果有原图但缺少缩略图/预览图，本地按需生成
+        await ensureLocalThumbnails(attachment);
         attachments.add(attachment);
       }
     }
@@ -1800,7 +1930,8 @@ class DiaryStorage {
   Future<String?> _readOneDriveSecret(String key) async {
     try {
       return await _secretStore.read(key);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('读取OneDrive密钥失败: $error');
       return null;
     }
   }
@@ -1878,7 +2009,8 @@ class DiaryStorage {
       return CoupleProfile.normalizeCurrentUserRole(
         jsonMap['current_user_role'] as String?,
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint('加载本地用户角色失败: $error');
       return null;
     }
   }
@@ -1917,6 +2049,12 @@ class DiaryStorage {
       fallbackPrefix: 'entry',
     );
     return File(_join(rootPath, _entriesDirectoryName, '$safeEntryId.json'));
+  }
+
+  Future<void> _purgeDustbinIfNeeded() async {
+    if (_hasPurgedDustbin) return;
+    _hasPurgedDustbin = true;
+    await purgeExpiredDustbinEntries();
   }
 
   Future<void> purgeExpiredDustbinEntries() async {
@@ -1964,7 +2102,8 @@ class DiaryStorage {
           ),
           deletedAt: rawDeletedEntry.deletedAt,
         );
-      } catch (_) {
+      } catch (error) {
+        debugPrint('清理过期回收站条目失败: $error');
         continue;
       }
       if (now.isBefore(deletedEntry.deletedAt.add(_dustbinRetention))) {
@@ -2166,7 +2305,8 @@ class DiaryStorage {
       if (_isAttachmentStoragePath(normalized, allowDrafts: allowDrafts)) {
         return normalized;
       }
-    } catch (_) {
+    } catch (error) {
+      debugPrint('验证附件路径失败: $error');
       return null;
     }
     return null;
@@ -2255,7 +2395,8 @@ class DiaryStorage {
       return encoded == true && await targetFile.exists();
     } on MissingPluginException {
       return false;
-    } catch (_) {
+    } catch (error) {
+      debugPrint('调整JPEG图片大小失败: $error');
       return false;
     }
   }
@@ -2282,7 +2423,8 @@ class DiaryStorage {
         return;
       }
       await targetFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('调整PNG图片大小失败: $error');
       await sourceFile.copy(targetFile.path);
     }
   }

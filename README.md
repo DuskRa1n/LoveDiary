@@ -2,6 +2,7 @@
 
 LoveDiary 是一个为两个人长期共同记录生活设计的情侣日记 App。
 
+当前发布重点是 Android，正式包名为 `com.ericchen.lovediary`，当前版本为 `1.3.5+80`。
 
 ## 主要功能
 
@@ -106,15 +107,21 @@ D:\Software\flutter\bin\flutter.bat test
 构建 Android arm64 release APK：
 
 ```powershell
-D:\Software\flutter\bin\flutter.bat build apk --release --target-platform android-arm64 --split-per-abi
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_arm64_release.ps1
+```
+
+如果已经完成 Flutter 构建，只需要把现有 arm64 APK 整理到 `release` 目录：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_arm64_release.ps1 -SkipBuild
 ```
 
 构建产物位置：
 
 ```text
-build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+release/LoveDiary-<version+build>-arm64-v8a-release.apk
 ```
 
 - `flutter analyze`
 - `flutter test`
-- `flutter build apk --release --target-platform android-arm64 --split-per-abi`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_arm64_release.ps1`

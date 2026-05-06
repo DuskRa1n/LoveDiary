@@ -43,75 +43,112 @@ class _GlassActionPill extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: radius,
             boxShadow: [
-              if (isEnabled)
+              if (isEnabled) ...[
                 BoxShadow(
-                  color: DiaryPalette.rose.withValues(alpha: 0.22),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
+                  color: DiaryPalette.rose.withValues(alpha: 0.18),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
                 ),
+                BoxShadow(
+                  color: DiaryPalette.white.withValues(alpha: 0.4),
+                  blurRadius: 2,
+                  offset: const Offset(0, -1),
+                ),
+              ],
             ],
           ),
           child: ClipRRect(
             borderRadius: radius,
             child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: DecoratedBox(
+              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
                 decoration: BoxDecoration(
                   borderRadius: radius,
-                  color: DiaryPalette.white.withValues(
-                    alpha: isEnabled
-                        ? DiaryPalette.surfaceGlassAlpha
-                        : DiaryPalette.surfaceSoftAlpha,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      DiaryPalette.white.withValues(
+                        alpha: isEnabled ? 0.55 : 0.30,
+                      ),
+                      DiaryPalette.mist.withValues(
+                        alpha: isEnabled ? 0.25 : 0.12,
+                      ),
+                    ],
                   ),
                   border: Border.all(
+                    width: 1.2,
                     color: DiaryPalette.white.withValues(
-                      alpha: DiaryPalette.surfaceBorderAlpha,
+                      alpha: isEnabled ? 0.80 : 0.50,
                     ),
                   ),
                 ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
+                child: Container(
+                  decoration: BoxDecoration(
                     borderRadius: radius,
-                    onTap: onPressed,
-                    splashColor: DiaryPalette.white.withValues(alpha: 0.16),
-                    highlightColor: DiaryPalette.white.withValues(alpha: 0.08),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 13,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: DiaryPalette.mist.withValues(alpha: 0.84),
-                              shape: BoxShape.circle,
-                            ),
-                            alignment: Alignment.center,
-                            child: Icon(
-                              icon,
-                              size: 18,
-                              color: isEnabled
-                                  ? DiaryPalette.rose
-                                  : DiaryPalette.wine,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            label,
-                            style: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(
-                                  color: isEnabled
-                                      ? DiaryPalette.ink
-                                      : DiaryPalette.wine,
-                                  fontWeight: FontWeight.w900,
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        DiaryPalette.white.withValues(alpha: 0.30),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: InkWell(
+                      borderRadius: radius,
+                      onTap: onPressed,
+                      splashColor: DiaryPalette.rose.withValues(alpha: 0.12),
+                      highlightColor: DiaryPalette.white.withValues(alpha: 0.10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 14,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    DiaryPalette.mist.withValues(alpha: 0.96),
+                                    DiaryPalette.blush.withValues(alpha: 0.40),
+                                  ],
                                 ),
-                          ),
-                        ],
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: DiaryPalette.white.withValues(alpha: 0.70),
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: Icon(
+                                icon,
+                                size: 18,
+                                color: isEnabled
+                                    ? DiaryPalette.rose
+                                    : DiaryPalette.wine,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              label,
+                              style: Theme.of(context).textTheme.labelLarge
+                                  ?.copyWith(
+                                    color: isEnabled
+                                        ? DiaryPalette.ink
+                                        : DiaryPalette.wine,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -133,52 +170,74 @@ class _GlassPlusButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const size = 54.0;
+    const size = 56.0;
     return RepaintBoundary(
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: DiaryPalette.rose.withValues(alpha: 0.24),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
+              color: DiaryPalette.rose.withValues(alpha: 0.20),
+              blurRadius: 28,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: DiaryPalette.white.withValues(alpha: 0.50),
+              blurRadius: 3,
+              offset: const Offset(0, -2),
             ),
           ],
         ),
         child: ClipOval(
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-            child: DecoratedBox(
+            filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            child: Container(
               decoration: BoxDecoration(
-                color: DiaryPalette.white.withValues(
-                  alpha: DiaryPalette.surfaceGlassAlpha,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    DiaryPalette.white.withValues(alpha: 0.60),
+                    DiaryPalette.mist.withValues(alpha: 0.28),
+                  ],
                 ),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: DiaryPalette.white.withValues(
-                    alpha: DiaryPalette.surfaceBorderAlpha,
-                  ),
+                  width: 1.4,
+                  color: DiaryPalette.white.withValues(alpha: 0.85),
                 ),
               ),
-              child: Material(
-                type: MaterialType.transparency,
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: onPressed,
-                  splashColor: DiaryPalette.rose.withValues(alpha: 0.12),
-                  highlightColor: DiaryPalette.rose.withValues(alpha: 0.08),
-                  child: SizedBox(
-                    width: size,
-                    height: size,
-                    child: AnimatedRotation(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutBack,
-                      turns: isOpen ? 0.125 : 0,
-                      child: Icon(
-                        Icons.add_rounded,
-                        color: DiaryPalette.rose,
-                        size: 32,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      DiaryPalette.white.withValues(alpha: 0.35),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: onPressed,
+                    splashColor: DiaryPalette.rose.withValues(alpha: 0.10),
+                    highlightColor: DiaryPalette.white.withValues(alpha: 0.12),
+                    child: SizedBox(
+                      width: size,
+                      height: size,
+                      child: AnimatedRotation(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutBack,
+                        turns: isOpen ? 0.125 : 0,
+                        child: Icon(
+                          Icons.add_rounded,
+                          color: DiaryPalette.rose,
+                          size: 32,
+                        ),
                       ),
                     ),
                   ),
@@ -248,106 +307,128 @@ class _FloatingTabBar extends StatelessWidget {
           borderRadius: radius,
           boxShadow: [
             BoxShadow(
-              color: DiaryPalette.ink.withValues(alpha: 0.06),
-              blurRadius: 22,
-              offset: const Offset(0, 12),
+              color: DiaryPalette.ink.withValues(alpha: 0.05),
+              blurRadius: 28,
+              offset: const Offset(0, 14),
             ),
             BoxShadow(
               color: DiaryPalette.rose.withValues(alpha: 0.08),
-              blurRadius: 28,
-              offset: const Offset(0, 8),
+              blurRadius: 32,
+              offset: const Offset(0, 10),
+            ),
+            BoxShadow(
+              color: DiaryPalette.white.withValues(alpha: 0.40),
+              blurRadius: 3,
+              offset: const Offset(0, -2),
             ),
           ],
         ),
         child: ClipRRect(
           borderRadius: radius,
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-            child: DecoratedBox(
+            filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            child: Container(
               decoration: BoxDecoration(
                 borderRadius: radius,
-                color: DiaryPalette.white.withValues(
-                  alpha: DiaryPalette.surfaceGlassAlpha,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    DiaryPalette.white.withValues(alpha: 0.55),
+                    DiaryPalette.mist.withValues(alpha: 0.22),
+                  ],
                 ),
                 border: Border.all(
-                  color: DiaryPalette.white.withValues(
-                    alpha: DiaryPalette.surfaceBorderAlpha,
-                  ),
+                  width: 1.3,
+                  color: DiaryPalette.white.withValues(alpha: 0.82),
                 ),
               ),
-              child: SizedBox(
-                height: 68,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    const inset = 6.0;
-                    final itemWidth =
-                        (constraints.maxWidth - inset * 2) / _items.length;
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: radius,
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      DiaryPalette.white.withValues(alpha: 0.28),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: SizedBox(
+                  height: 68,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const inset = 6.0;
+                      final itemWidth =
+                          (constraints.maxWidth - inset * 2) / _items.length;
 
-                    return AnimatedBuilder(
-                      animation: pageController,
-                      builder: (context, _) {
-                        final rawPage = pageController.hasClients
-                            ? pageController.page ?? currentIndex.toDouble()
-                            : currentIndex.toDouble();
-                        final page = rawPage
-                            .clamp(0.0, (_items.length - 1).toDouble())
-                            .toDouble();
+                      return AnimatedBuilder(
+                        animation: pageController,
+                        builder: (context, _) {
+                          final rawPage = pageController.hasClients
+                              ? pageController.page ?? currentIndex.toDouble()
+                              : currentIndex.toDouble();
+                          final page = rawPage
+                              .clamp(0.0, (_items.length - 1).toDouble())
+                              .toDouble();
 
-                        return Stack(
-                          children: [
-                            Positioned(
-                              top: inset,
-                              bottom: inset,
-                              left: inset + itemWidth * page,
-                              width: itemWidth,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      DiaryPalette.white.withValues(
-                                        alpha: 0.70,
+                          return Stack(
+                            children: [
+                              Positioned(
+                                top: inset,
+                                bottom: inset,
+                                left: inset + itemWidth * page,
+                                width: itemWidth,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        DiaryPalette.white.withValues(
+                                          alpha: 0.70,
+                                        ),
+                                        DiaryPalette.mist.withValues(alpha: 0.52),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(24),
+                                    border: Border.all(
+                                      color: DiaryPalette.white.withValues(
+                                        alpha: 0.62,
                                       ),
-                                      DiaryPalette.mist.withValues(alpha: 0.52),
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(
-                                    color: DiaryPalette.white.withValues(
-                                      alpha: 0.62,
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(inset),
-                              child: Row(
-                                children: [
-                                  for (
-                                    var index = 0;
-                                    index < _items.length;
-                                    index++
-                                  )
-                                    Expanded(
-                                      child: _FloatingTabButton(
-                                        spec: _items[index],
-                                        selection: (1 - (page - index).abs())
-                                            .clamp(0.0, 1.0)
-                                            .toDouble(),
-                                        selected: currentIndex == index,
-                                        onTap: () => onSelected(index),
+                              Padding(
+                                padding: const EdgeInsets.all(inset),
+                                child: Row(
+                                  children: [
+                                    for (
+                                      var index = 0;
+                                      index < _items.length;
+                                      index++
+                                    )
+                                      Expanded(
+                                        child: _FloatingTabButton(
+                                          spec: _items[index],
+                                          selection: (1 - (page - index).abs())
+                                              .clamp(0.0, 1.0)
+                                              .toDouble(),
+                                          selected: currentIndex == index,
+                                          onTap: () => onSelected(index),
+                                        ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  },
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),

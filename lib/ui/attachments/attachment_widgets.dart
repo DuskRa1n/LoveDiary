@@ -1,4 +1,4 @@
-﻿part of '../../app.dart';
+part of '../../app.dart';
 
 class AttachmentGrid extends StatelessWidget {
   const AttachmentGrid({
@@ -19,6 +19,8 @@ class AttachmentGrid extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: shrinkWrap,
       physics: physics,
+      primary: false,
+      padding: EdgeInsets.zero,
       itemCount: attachments.length,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
@@ -73,6 +75,8 @@ class EditableAttachmentGrid extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      primary: false,
+      padding: EdgeInsets.zero,
       itemCount: attachments.length,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,

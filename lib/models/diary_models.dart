@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 class DiaryComment {
   const DiaryComment({
     required this.author,
@@ -21,7 +23,7 @@ class DiaryComment {
     return DiaryComment(
       author: json['author'] as String? ?? '评论人',
       content: json['content'] as String? ?? '',
-      createdAt: DateTime.parse(json['created_at'] as String),
+      createdAt: _parseDateTime(json['created_at']),
     );
   }
 }
@@ -130,9 +132,7 @@ class DiaryAttachment {
       previewPath: json['preview_path'] as String?,
       originalPath: json['original_path'] as String?,
       originalName: json['original_name'] as String? ?? 'attachment.jpg',
-      createdAt: DateTime.parse(
-        json['created_at'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      createdAt: _parseDateTime(json['created_at']),
       hasLocalOriginal: json['has_local_original'] as bool? ?? false,
       syncOriginal: json['sync_original'] as bool? ?? false,
     );
@@ -210,9 +210,7 @@ class CoupleProfile {
       currentUserRole: normalizeCurrentUserRole(
         currentUserRole ?? json['current_user_role'] as String?,
       ),
-      togetherSince: DateTime.parse(
-        json['together_since'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      togetherSince: _parseDateTime(json['together_since']),
       isOnboarded: json['is_onboarded'] as bool? ?? false,
     );
   }
@@ -318,16 +316,12 @@ class ScheduleItem {
       id: json['id'] as String? ?? 'schedule_unknown',
       title: json['title'] as String? ?? '',
       description: json['description'] as String?,
-      date: DateTime.parse(
-        json['date'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      date: _parseDateTime(json['date']),
       type: ScheduleItemType.fromStorageValue(json['type'] as String?),
-      createdAt: DateTime.parse(
-        json['created_at'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      createdAt: _parseDateTime(json['created_at']),
       updatedAt: json['updated_at'] == null
           ? null
-          : DateTime.parse(json['updated_at'] as String),
+          : _parseDateTime(json['updated_at']),
     );
   }
 
@@ -433,10 +427,10 @@ class DiaryEntry {
       title: json['title'] as String? ?? '',
       content: json['content'] as String? ?? '',
       mood: json['mood'] as String? ?? '开心',
-      createdAt: DateTime.parse(json['created_at'] as String),
+      createdAt: _parseDateTime(json['created_at']),
       updatedAt: json['updated_at'] == null
           ? null
-          : DateTime.parse(json['updated_at'] as String),
+          : _parseDateTime(json['updated_at']),
       comments: rawComments
           .map(
             (comment) => DiaryComment.fromJson(comment as Map<String, dynamic>),
@@ -465,7 +459,7 @@ class DeletedDiaryEntry {
   factory DeletedDiaryEntry.fromJson(Map<String, dynamic> json) {
     return DeletedDiaryEntry(
       entry: DiaryEntry.fromJson(json['entry'] as Map<String, dynamic>),
-      deletedAt: DateTime.parse(json['deleted_at'] as String),
+      deletedAt: _parseDateTime(json['deleted_at']),
     );
   }
 }
@@ -507,18 +501,26 @@ class DiaryDraft {
       title: json['title'] as String? ?? '',
       content: json['content'] as String? ?? '',
       mood: json['mood'] as String? ?? '开心',
-      selectedDate: DateTime.parse(
-        json['selected_date'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      selectedDate: _parseDateTime(json['selected_date']),
       attachments: rawAttachments
           .map(
             (attachment) =>
                 DiaryAttachment.fromJson(attachment as Map<String, dynamic>),
           )
           .toList(),
-      savedAt: DateTime.parse(
-        json['saved_at'] as String? ?? DateTime.now().toIso8601String(),
-      ),
+      savedAt: _parseDateTime(json['saved_at']),
     );
   }
+}
+
+DateTime _parseDateTime(dynamic value) {
+  if (value is String) {
+    try {
+      return DateTime.parse(value);
+    } catch (error) {
+      debugPrint('日期解析失败: $error, 原始值: $value');
+      return DateTime.now();
+    }
+  }
+  return DateTime.now();
 }

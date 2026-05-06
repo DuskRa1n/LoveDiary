@@ -452,6 +452,16 @@ class SyncFilePolicy {
     }
   }
 
+  static bool isAttachmentPath(String relativePath) {
+    try {
+      final normalized = normalizeRelativePath(relativePath, allowEmpty: false);
+      final segments = normalized.split('/');
+      return _isAttachmentPath(segments);
+    } on FormatException {
+      return false;
+    }
+  }
+
   static bool _isEntryPath(List<String> segments) {
     if (segments.length != 2 || segments[0] != entriesDirectory) {
       return false;
@@ -491,29 +501,47 @@ class SyncFilePolicy {
 
 class AttachmentSyncPolicy {
   const AttachmentSyncPolicy({
-    this.syncOriginals = false,
-    this.downloadOriginals = false,
+    this.syncOriginals = true,
+    this.downloadOriginals = true,
   });
 
   final bool syncOriginals;
   final bool downloadOriginals;
 
   bool includeLocalPath(String relativePath) {
-    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
-        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
-            syncOriginals);
+    if (!SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
+      return false;
+    }
+    // 非附件路径（条目、profile等）始终同步
+    if (!SyncFilePolicy.isAttachmentPath(relativePath)) {
+      return true;
+    }
+    // 附件路径：只同步原图，跳过缩略图和预览图
+    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && syncOriginals;
   }
 
   bool includeRemotePath(String relativePath) {
-    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
-        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
-            downloadOriginals);
+    if (!SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
+      return false;
+    }
+    // 非附件路径始终下载
+    if (!SyncFilePolicy.isAttachmentPath(relativePath)) {
+      return true;
+    }
+    // 附件路径：只下载原图
+    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && downloadOriginals;
   }
 
   bool includeTombstonePath(String relativePath) {
-    return SyncFilePolicy.isSyncableBusinessPath(relativePath) &&
-        (!SyncFilePolicy.isOriginalAttachmentPath(relativePath) ||
-            syncOriginals);
+    if (!SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
+      return false;
+    }
+    // 非附件路径始终处理
+    if (!SyncFilePolicy.isAttachmentPath(relativePath)) {
+      return true;
+    }
+    // 附件路径：只处理原图
+    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && syncOriginals;
   }
 }
 

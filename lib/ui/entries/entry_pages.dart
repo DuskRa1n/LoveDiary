@@ -167,8 +167,17 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
   Widget build(BuildContext context) {
     final isWriteLocked = _isWriteLocked;
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('日记详情'),
+        backgroundColor: DiaryPalette.paper.withValues(alpha: 0.72),
+        surfaceTintColor: Colors.transparent,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: const SizedBox.expand(),
+          ),
+        ),
         actions: [
           IconButton(
             onPressed: isWriteLocked ? widget.onWriteBlocked : _editEntry,
@@ -182,8 +191,99 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
           ),
         ],
       ),
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              MediaQuery.paddingOf(context).bottom + 12,
+            ),
+            decoration: BoxDecoration(
+              color: DiaryPalette.paper.withValues(alpha: 0.82),
+              border: Border(
+                top: BorderSide(
+                  color: DiaryPalette.line.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _commentController,
+                    enabled: !isWriteLocked,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: '写一条评论...',
+                      hintStyle: TextStyle(
+                        color: DiaryPalette.wine.withValues(alpha: 0.5),
+                      ),
+                      filled: true,
+                      fillColor: DiaryPalette.white.withValues(alpha: 0.86),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide(
+                          color: DiaryPalette.line.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  decoration: BoxDecoration(
+                    color: DiaryPalette.rose,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: DiaryPalette.rose.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    onPressed: _isSavingComment
+                        ? null
+                        : isWriteLocked
+                        ? widget.onWriteBlocked
+                        : _submitComment,
+                    icon: _isSavingComment
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
       body: DiaryPage(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        padding: EdgeInsets.fromLTRB(
+          20,
+          MediaQuery.paddingOf(context).top + kToolbarHeight + 12,
+          20,
+          32,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -214,68 +314,30 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
               ),
             ),
             if (_entry.attachments.isNotEmpty) ...[
-              const SizedBox(height: 22),
+              const SizedBox(height: 18),
               const DiarySectionHeader(title: '附图'),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               DiaryPanel(
-                child: AttachmentGrid(
-                  attachments: _entry.attachments,
-                  rootDirectoryPath: widget.rootDirectoryPath,
+                padding: const EdgeInsets.all(10),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: AttachmentGrid(
+                    attachments: _entry.attachments,
+                    rootDirectoryPath: widget.rootDirectoryPath,
+                  ),
                 ),
               ),
             ],
-            const SizedBox(height: 22),
+            const SizedBox(height: 18),
             const DiarySectionHeader(title: '评论区'),
-            const SizedBox(height: 12),
-            DiaryPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '将以 ${widget.profile.currentUserPronoun} 的身份发表评论。',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(color: DiaryPalette.wine),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _commentController,
-                    enabled: !isWriteLocked,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: '写一条评论',
-                      hintText: '比如：这个瞬间我也想一直记得。',
-                      alignLabelWithHint: true,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _isSavingComment
-                          ? null
-                          : isWriteLocked
-                          ? widget.onWriteBlocked
-                          : _submitComment,
-                      icon: const Icon(Icons.chat_bubble_outline_rounded),
-                      label: Text(
-                        _isSavingComment
-                            ? '保存中...'
-                            : isWriteLocked
-                            ? '同步中，稍后评论'
-                            : '发表评论',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             if (_entry.comments.isEmpty)
-              const DiaryEmptyState(
-                title: '还没有评论',
-                icon: Icons.chat_bubble_outline_rounded,
+              const DiaryPanel(
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                child: DiaryEmptyState(
+                  title: '还没有评论',
+                  icon: Icons.chat_bubble_outline_rounded,
+                ),
               )
             else
               ..._entry.comments.map(

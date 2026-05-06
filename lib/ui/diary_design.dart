@@ -465,12 +465,12 @@ class DiaryEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DiaryPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
       child: Column(
         children: [
           Container(
-            width: 68,
-            height: 68,
+            width: 80,
+            height: 80,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
@@ -478,12 +478,19 @@ class DiaryEmptyState extends StatelessWidget {
                 colors: [Color(0xFFFFE5DF), Color(0xFFFFF2D9)],
               ),
               shape: BoxShape.circle,
-              border: Border.all(color: DiaryPalette.white),
+              border: Border.all(color: DiaryPalette.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: DiaryPalette.rose.withValues(alpha: 0.15),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
             alignment: Alignment.center,
-            child: Icon(icon, color: DiaryPalette.rose, size: 30),
+            child: Icon(icon, color: DiaryPalette.rose, size: 34),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           Text(
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -492,13 +499,23 @@ class DiaryEmptyState extends StatelessWidget {
             ),
           ),
           if (subtitle?.trim().isNotEmpty == true) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(
               subtitle!.trim(),
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: DiaryPalette.wine,
-                height: 1.55,
+                height: 1.6,
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 10),
+            Text(
+              '写下第一篇日记，开始记录你们的故事。',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: DiaryPalette.wine.withValues(alpha: 0.7),
+                height: 1.6,
               ),
             ),
           ],
@@ -941,4 +958,25 @@ String formatDiaryTime(DateTime date) {
 
 bool isSameDiaryDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+Route<T> buildDiaryRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final tween = Tween(begin: const Offset(0, 0.06), end: Offset.zero)
+          .chain(CurveTween(curve: Curves.easeOutCubic));
+      final fadeTween = Tween(begin: 0.0, end: 1.0)
+          .chain(CurveTween(curve: Curves.easeOut));
+      return FadeTransition(
+        opacity: animation.drive(fadeTween),
+        child: SlideTransition(
+          position: animation.drive(tween),
+          child: child,
+        ),
+      );
+    },
+    transitionDuration: const Duration(milliseconds: 320),
+    reverseTransitionDuration: const Duration(milliseconds: 260),
+  );
 }

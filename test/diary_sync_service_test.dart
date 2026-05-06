@@ -8,6 +8,8 @@ import 'package:love_diary/sync/diary_sync_service.dart';
 import 'package:love_diary/sync/sync_models.dart';
 import 'package:love_diary/sync/sync_remote_source.dart';
 
+import 'test_utils.dart';
+
 class FakeRemoteSource implements DiarySyncRemoteSource {
   FakeRemoteSource(this.snapshot);
 
@@ -65,9 +67,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await tempDirectory.exists()) {
-      await tempDirectory.delete(recursive: true);
-    }
+    await deleteTempDirectory(tempDirectory);
   });
 
   test('uses remote baseline to delete remote when snapshot is empty', () async {

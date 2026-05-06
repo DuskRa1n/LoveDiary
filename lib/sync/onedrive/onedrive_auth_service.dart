@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../../data/diary_storage.dart';
 import '../sync_models.dart';
 import 'onedrive_models.dart';
@@ -16,7 +18,7 @@ class OneDriveAuthException implements Exception {
 }
 
 class OneDriveAuthService {
-  const OneDriveAuthService({required this.storage});
+  OneDriveAuthService({required this.storage});
 
   static const _defaultTenant = 'consumers';
   static const _defaultRemoteFolder = 'love_diary';
@@ -24,6 +26,7 @@ class OneDriveAuthService {
   static const _requestTimeout = Duration(seconds: 45);
 
   final DiaryStorage storage;
+  Completer<String>? _refreshCompleter;
 
   Future<OneDriveSyncConfig?> loadConfig() async {
     return storage.loadOneDriveSyncConfig();
@@ -151,6 +154,26 @@ class OneDriveAuthService {
       );
     }
 
+    // 防止并发刷新Token
+    if (_refreshCompleter != null) {
+      debugPrint('等待正在进行的Token刷新...');
+      return _refreshCompleter!.future;
+    }
+
+    _refreshCompleter = Completer<String>();
+    try {
+      final token = await _refreshToken(config);
+      _refreshCompleter!.complete(token);
+      return token;
+    } catch (error) {
+      _refreshCompleter!.completeError(error);
+      rethrow;
+    } finally {
+      _refreshCompleter = null;
+    }
+  }
+
+  Future<String> _refreshToken(OneDriveSyncConfig config) async {
     final response = await _postForm(
       Uri.parse(
         'https://login.microsoftonline.com/${config.tenant}/oauth2/v2.0/token',

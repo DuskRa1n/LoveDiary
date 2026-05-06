@@ -459,12 +459,13 @@ class _MonthHeatmapGrid extends StatelessWidget {
                 final level = _heatLevel(count, maxCount);
                 final isFuture = day.isAfter(today);
                 return InkWell(
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(10),
                   onTap: () => onDaySelected(day),
                   child: _MonthHeatmapCell(
                     day: dayNumber,
                     active: !isFuture && count > 0,
                     hasSchedule: scheduleDays.contains(day),
+                    isToday: day == today,
                     color: isFuture
                         ? DiaryPalette.line.withValues(alpha: 0.24)
                         : _heatColor(level),
@@ -485,20 +486,37 @@ class _MonthHeatmapCell extends StatelessWidget {
     required this.active,
     required this.hasSchedule,
     required this.color,
+    required this.isToday,
   });
 
   final int day;
   final bool active;
   final bool hasSchedule;
   final Color color;
+  final bool isToday;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: DiaryPalette.white.withValues(alpha: 0.62)),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isToday
+              ? DiaryPalette.rose
+              : DiaryPalette.white.withValues(alpha: 0.62),
+          width: isToday ? 2 : 1,
+        ),
+        boxShadow: isToday
+            ? [
+                BoxShadow(
+                  color: DiaryPalette.rose.withValues(alpha: 0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -507,20 +525,21 @@ class _MonthHeatmapCell extends StatelessWidget {
             '$day',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: active ? DiaryPalette.white : DiaryPalette.wine,
-              fontWeight: FontWeight.w900,
+              fontWeight: isToday ? FontWeight.w900 : FontWeight.w700,
               height: 1,
             ),
           ),
-          const SizedBox(height: 2),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            width: hasSchedule ? 4 : 0,
-            height: hasSchedule ? 4 : 0,
-            decoration: BoxDecoration(
-              color: active ? DiaryPalette.white : DiaryPalette.rose,
-              shape: BoxShape.circle,
+          if (hasSchedule) ...[
+            const SizedBox(height: 2),
+            Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(
+                color: active ? DiaryPalette.white : DiaryPalette.rose,
+                shape: BoxShape.circle,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

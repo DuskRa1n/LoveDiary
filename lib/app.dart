@@ -34,12 +34,12 @@ part 'ui/entries/entry_pages.dart';
 part 'ui/attachments/attachment_widgets.dart';
 part 'ui/settings/onedrive_sync_settings_page.dart';
 
-const List<String> kDiaryMoods = ['开心', '安心', '温柔', '想念', '真诚', '治愈', '甜'];
+const List<String> kDiaryMoods = ['开心', '安心', '温柔', '想念', '真诚', '治愈', '甜', '难过', '委屈', '生气', '焦虑', '孤独', '失落'];
 
 class LoveDailyApp extends StatelessWidget {
-  const LoveDailyApp({super.key, this.storage = const DiaryStorage()});
+  const LoveDailyApp({super.key, this.storage});
 
-  final DiaryStorage storage;
+  final DiaryStorage? storage;
 
   @override
   Widget build(BuildContext context) {
@@ -151,15 +151,15 @@ class LoveDailyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: LoveDailyShell(storage: storage),
+      home: LoveDailyShell(storage: storage ?? DiaryStorage()),
     );
   }
 }
 
 class LoveDailyShell extends StatefulWidget {
-  const LoveDailyShell({super.key, this.storage = const DiaryStorage()});
+  const LoveDailyShell({super.key, this.storage});
 
-  final DiaryStorage storage;
+  final DiaryStorage? storage;
 
   @override
   State<LoveDailyShell> createState() => _LoveDailyShellState();
@@ -207,6 +207,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   static const Duration _syncExecutionTimeout = Duration(minutes: 12);
   static const Duration _foregroundUpdateInterval = Duration(milliseconds: 350);
 
+  late final DiaryStorage _storage = widget.storage ?? DiaryStorage();
   late final String _startupQuote = randomDailyQuote();
   final ValueNotifier<bool> _writeLockedListenable = ValueNotifier(false);
   final ValueNotifier<int> _syncStatusRevision = ValueNotifier(0);
@@ -232,6 +233,13 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   List<ScheduleItem> _schedules = const [];
   String? _storageRootPath;
   String? _startupLoadError;
+
+  // 页面缓存
+  List<Widget>? _cachedPages;
+  List<DiaryEntry>? _cachedPageEntries;
+  CoupleProfile? _cachedPageProfile;
+  List<ScheduleItem>? _cachedPageSchedules;
+  double? _cachedTopStatusInset;
 
   @override
   void initState() {
@@ -366,23 +374,29 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _loadAppData() async {
-    var currentStep = 'loadEntries';
+    var currentStep = 'loadData';
     String? resolvedRootPath;
     try {
-      final entries = await widget.storage.loadEntries();
-      currentStep = 'loadProfile';
-      final profile = await widget.storage.loadProfile();
-      currentStep = 'loadSchedules';
-      final schedules = await widget.storage.loadSchedules();
-      currentStep = 'resolveRootDirectory';
-      final rootDirectory = await widget.storage.resolveRootDirectory();
+      final results = await Future.wait([
+        _storage.loadEntries(),
+        _storage.loadProfile(),
+        _storage.loadSchedules(),
+        _storage.resolveRootDirectory(),
+      ]);
+
+      final entries = results[0] as List<DiaryEntry>;
+      final profile = results[1] as CoupleProfile;
+      final schedules = results[2] as List<ScheduleItem>;
+      final rootDirectory = results[3] as Directory;
       resolvedRootPath = rootDirectory.path;
+
       currentStep = 'loadSyncState';
-      final syncState = await widget.storage.loadSyncState(
-        SyncProvider.oneDrive,
-      );
-      currentStep = 'loadOneDriveSyncConfig';
-      final oneDriveConfig = await widget.storage.loadOneDriveSyncConfig();
+      final syncResults = await Future.wait([
+        _storage.loadSyncState(SyncProvider.oneDrive),
+        _storage.loadOneDriveSyncConfig(),
+      ]);
+      final syncState = syncResults[0] as SyncState;
+      final oneDriveConfig = syncResults[1] as OneDriveSyncConfig?;
 
       if (!mounted) {
         return;
@@ -607,10 +621,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         .add(const Duration(hours: 18));
   }
 
-  Future<void> _persistProfile() => widget.storage.saveProfile(_profile);
+  Future<void> _persistProfile() => _storage.saveProfile(_profile);
 
   Future<void> _reloadEntries() async {
-    final entries = await widget.storage.loadEntries();
+    final entries = await _storage.loadEntries();
     if (!mounted) {
       return;
     }
@@ -620,7 +634,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _reloadSchedules() async {
-    final schedules = await widget.storage.loadSchedules();
+    final schedules = await _storage.loadSchedules();
     if (!mounted) {
       return;
     }
@@ -654,7 +668,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return null;
     }
 
-    final savedSchedule = await widget.storage.saveSchedule(schedule);
+    final savedSchedule = await _storage.saveSchedule(schedule);
     await _reloadSchedules();
     unawaited(
       _triggerAutoSync(reason: initialSchedule == null ? '添加日程' : '更新日程'),
@@ -678,12 +692,12 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           writeLockedListenable: _writeLockedListenable,
           onWriteBlocked: _showWriteLockedMessage,
           onSaveSchedule: (schedule) async {
-            await widget.storage.saveSchedule(schedule);
+            await _storage.saveSchedule(schedule);
             await _reloadSchedules();
             unawaited(_triggerAutoSync(reason: '保存日程'));
           },
           onDeleteSchedule: (schedule) async {
-            await widget.storage.deleteSchedule(schedule);
+            await _storage.deleteSchedule(schedule);
             await _reloadSchedules();
             unawaited(_triggerAutoSync(reason: '删除日程'));
           },
@@ -702,9 +716,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
 
     final entry = await Navigator.of(context).push<DiaryEntry>(
-      MaterialPageRoute(
-        builder: (_) => CreateEntryPage(
-          storage: widget.storage,
+      buildDiaryRoute(
+        CreateEntryPage(
+          storage: _storage,
           profile: _profile,
           initialEntry: initialEntry,
           rootDirectoryPath: _storageRootPath,
@@ -718,9 +732,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return null;
     }
 
-    final savedEntry = await widget.storage.saveEntry(entry);
+    final savedEntry = await _storage.saveEntry(entry);
     if (initialEntry == null) {
-      await widget.storage.clearEntryDraft();
+      await _storage.clearEntryDraft();
     }
     await _reloadEntries();
 
@@ -760,7 +774,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       );
       _entries[index] = updatedEntry;
     });
-    await widget.storage.saveEntry(updatedEntry);
+    await _storage.saveEntry(updatedEntry);
     await _reloadEntries();
     unawaited(_triggerAutoSync(reason: '发表评论'));
     return updatedEntry;
@@ -775,7 +789,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return;
     }
 
-    await widget.storage.deleteEntry(entry);
+    await _storage.deleteEntry(entry);
     await _reloadEntries();
     unawaited(_triggerAutoSync(reason: '删除日记'));
 
@@ -794,9 +808,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
 
     final updatedProfile = await Navigator.of(context).push<CoupleProfile>(
-      MaterialPageRoute(
-        fullscreenDialog: !firstSetup,
-        builder: (_) => ProfileSetupPage(
+      buildDiaryRoute(
+        ProfileSetupPage(
           initialProfile: _profile,
           isFirstSetup: firstSetup,
           writeLockedListenable: firstSetup ? null : _writeLockedListenable,
@@ -817,9 +830,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
   Future<void> _openDustbin() async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => DustbinPage(
-          storage: widget.storage,
+      buildDiaryRoute(
+        DustbinPage(
+          storage: _storage,
           writeLockedListenable: _writeLockedListenable,
           onWriteBlocked: _showWriteLockedMessage,
         ),
@@ -833,8 +846,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
   void _openEntryDetail(DiaryEntry entry) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => EntryDetailPage(
+      buildDiaryRoute(
+        EntryDetailPage(
           profile: _profile,
           entry: entry,
           rootDirectoryPath: _storageRootPath,
@@ -849,7 +862,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   OneDriveAuthService _oneDriveAuthService() {
-    return OneDriveAuthService(storage: widget.storage);
+    return OneDriveAuthService(storage: _storage);
   }
 
   OneDriveRemoteSource _oneDriveRemoteSource() {
@@ -922,8 +935,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       minimumSyncIntervalMinutes:
           _oneDriveConfig?.minimumSyncIntervalMinutes ?? 0,
       maxDestructiveActions: _oneDriveConfig?.maxDestructiveActions ?? 3,
-      syncOriginals: _oneDriveConfig?.syncOriginals ?? false,
-      downloadOriginals: _oneDriveConfig?.downloadOriginals ?? false,
+      syncOriginals: _oneDriveConfig?.syncOriginals ?? true,
+      downloadOriginals: _oneDriveConfig?.downloadOriginals ?? true,
       localOriginalRetentionDays:
           _oneDriveConfig?.localOriginalRetentionDays ?? 30,
     );
@@ -949,9 +962,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     final resetSyncBaseline =
         _oneDriveConfig!.remoteFolder != updated.remoteFolder;
     if (resetSyncBaseline) {
-      await widget.storage.resetSyncState(SyncProvider.oneDrive);
+      await _storage.resetSyncState(SyncProvider.oneDrive);
     }
-    await widget.storage.saveOneDriveSyncConfig(updated);
+    await _storage.saveOneDriveSyncConfig(updated);
     if (!mounted) {
       return;
     }
@@ -991,7 +1004,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
       final remoteSource = _oneDriveRemoteSource();
       final executor = DiarySyncExecutor(
-        storage: widget.storage,
+        storage: _storage,
         remoteSource: remoteSource,
         provider: SyncProvider.oneDrive,
         safetyPolicy: SyncSafetyPolicy(
@@ -1164,12 +1177,12 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   }
 
   Future<void> _recordSyncFailure(SyncProvider provider, String message) async {
-    final currentState = await widget.storage.loadSyncState(provider);
+    final currentState = await _storage.loadSyncState(provider);
     final failedState = currentState.copyWith(
       lastFailedAt: DateTime.now(),
       lastFailureMessage: message,
     );
-    await widget.storage.saveSyncState(failedState, provider);
+    await _storage.saveSyncState(failedState, provider);
     if (provider == SyncProvider.oneDrive && mounted) {
       setState(() {
         _lastSyncFailedAt = failedState.lastFailedAt;
@@ -1204,7 +1217,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
     try {
       final executor = DiarySyncExecutor(
-        storage: widget.storage,
+        storage: _storage,
         remoteSource: remoteSource,
         provider: provider,
         attachmentPolicy: attachmentPolicy,
@@ -1282,7 +1295,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       await _yieldToUi();
       final remoteSource = _oneDriveRemoteSource();
       final snapshot = await remoteSource.fetchSnapshot(
-        baseline: await widget.storage.loadSyncState(SyncProvider.oneDrive),
+        baseline: await _storage.loadSyncState(SyncProvider.oneDrive),
         onProgress: (remoteProgress, label) {
           final mappedProgress = 0.05 + remoteProgress.clamp(0, 1) * 0.25;
           unawaited(
@@ -1321,7 +1334,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         if (mounted) {
           _recordSyncStatus(progress, label);
         }
-        final targetAbsolutePath = await widget.storage
+        final targetAbsolutePath = await _storage
             .resolveSyncFileAbsolutePath(file.relativePath);
         final targetFile = File(targetAbsolutePath);
         final parent = targetFile.parent;
@@ -1335,10 +1348,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         );
       }
 
-      final localFiles = (await widget.storage.listSyncFiles())
+      final localFiles = (await _storage.listSyncFiles())
           .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
           .toList();
-      await widget.storage.saveSyncState(
+      await _storage.saveSyncState(
         SyncState(
           lastSyncedAt: DateTime.now(),
           lastKnownRemoteCursor: snapshot.cursor,
@@ -1397,7 +1410,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           defaults: defaults,
           onDisconnect: _disconnectOneDrive,
           onCleanLocalOriginals: (olderThan) =>
-              widget.storage.purgeLocalOriginals(olderThan: olderThan),
+              _storage.purgeLocalOriginals(olderThan: olderThan),
         ),
       ),
     );
@@ -1792,32 +1805,20 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     return inset;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (!_isLoaded) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  List<Widget> _buildPages() {
+    final topInset = _topStatusInset;
+    if (_cachedPages != null &&
+        identical(_cachedPageEntries, _entries) &&
+        _cachedPageProfile == _profile &&
+        _cachedPageSchedules == _schedules &&
+        _cachedTopStatusInset == topInset) {
+      return _cachedPages!;
     }
-
-    if (!_profile.isOnboarded && !_startupRestoreRequested) {
-      return ProfileSetupPage(
-        initialProfile: _profile,
-        isFirstSetup: true,
-        canRestoreFromOneDrive: _shouldOfferStartupRecovery(
-          entries: _entries,
-          profile: _profile,
-        ),
-        hasOneDriveConfig: _oneDriveConfig != null,
-        onRestoreFromOneDrive: _startStartupOneDriveRestore,
-        onComplete: (profile) async {
-          setState(() {
-            _profile = profile;
-          });
-          await _persistProfile();
-        },
-      );
-    }
-
-    final pages = [
+    _cachedPageEntries = _entries;
+    _cachedPageProfile = _profile;
+    _cachedPageSchedules = _schedules;
+    _cachedTopStatusInset = topInset;
+    _cachedPages = [
       RealTodayTab(
         profile: _profile,
         entries: _entries,
@@ -1850,6 +1851,35 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         onOpenOneDriveSettings: _openOneDriveSettings,
       ),
     ];
+    return _cachedPages!;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isLoaded) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    if (!_profile.isOnboarded && !_startupRestoreRequested) {
+      return ProfileSetupPage(
+        initialProfile: _profile,
+        isFirstSetup: true,
+        canRestoreFromOneDrive: _shouldOfferStartupRecovery(
+          entries: _entries,
+          profile: _profile,
+        ),
+        hasOneDriveConfig: _oneDriveConfig != null,
+        onRestoreFromOneDrive: _startStartupOneDriveRestore,
+        onComplete: (profile) async {
+          setState(() {
+            _profile = profile;
+          });
+          await _persistProfile();
+        },
+      );
+    }
+
+    final pages = _buildPages();
 
     final topInset = MediaQuery.paddingOf(context).top;
     return Scaffold(

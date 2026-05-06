@@ -8,6 +8,8 @@ import 'package:love_diary/models/diary_models.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
 
+import 'test_utils.dart';
+
 class MemorySecretStore implements SecretStore {
   final Map<String, String> _values = {};
 
@@ -48,9 +50,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await tempDirectory.exists()) {
-      await tempDirectory.delete(recursive: true);
-    }
+    await deleteTempDirectory(tempDirectory);
   });
 
   test('会把资料和日记写入文件结构', () async {

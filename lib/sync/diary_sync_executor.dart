@@ -668,6 +668,12 @@ class DiarySyncExecutor {
     required int completedActions,
     String? lastPath,
   }) async {
+    // 只在里程碑节点持久化：首个、每10个、最后一个
+    if (completedActions != 0 &&
+        completedActions != totalActions &&
+        completedActions % 10 != 0) {
+      return;
+    }
     final currentState = await storage.loadSyncState(provider);
     final startedAt = currentState.incompleteSyncStartedAt ?? DateTime.now();
     await storage.saveSyncState(

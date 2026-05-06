@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/diary_models.dart';
@@ -33,11 +35,20 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
   final TextEditingController _searchController = TextEditingController();
   String? _selectedMood;
   DateTime? _selectedDate;
+  Timer? _searchDebounce;
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _pickDate() async {
@@ -152,7 +163,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
           selectedMood: _selectedMood,
           selectedDate: _selectedDate,
           hasFilter: hasFilter,
-          onQueryChanged: () => setState(() {}),
+          onQueryChanged: _onSearchChanged,
           onMoodSelected: (mood) {
             setState(() {
               _selectedMood = mood;
@@ -491,105 +502,224 @@ class _TimelineEntryCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
+  static const _radius = 24.0;
+  static const _stripeWidth = 5.0;
+
   @override
   Widget build(BuildContext context) {
+    final moodColor = _moodStripeColor(entry.mood);
     return InkWell(
-      borderRadius: BorderRadius.circular(28),
+      borderRadius: BorderRadius.circular(_radius),
       onTap: onTap,
-      child: DiaryPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
-                          height: 1.12,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DiaryPalette.wine,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuButton<_EntryAction>(
-                  onSelected: (action) {
-                    if (action == _EntryAction.edit) {
-                      onEdit();
-                      return;
-                    }
-                    onDelete();
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: _EntryAction.edit, child: Text('编辑')),
-                    PopupMenuItem(
-                      value: _EntryAction.delete,
-                      child: Text('删除'),
-                    ),
-                  ],
-                ),
-              ],
+      child: Container(
+        decoration: BoxDecoration(
+          color: DiaryPalette.white.withValues(
+            alpha: DiaryPalette.surfaceStrongAlpha,
+          ),
+          borderRadius: BorderRadius.circular(_radius),
+          border: Border.all(
+            color: DiaryPalette.white.withValues(
+              alpha: DiaryPalette.surfaceBorderAlpha,
             ),
-            const SizedBox(height: 14),
-            Text(
-              entry.summary,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: DiaryPalette.wine,
-                height: 1.58,
-              ),
-            ),
-            if (entry.attachments.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              _TimelineEntryPreview(
-                rootDirectoryPath: rootDirectoryPath,
-                attachments: entry.attachments,
-              ),
-            ],
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                DiaryBadge(label: entry.author, tone: DiaryBadgeTone.sand),
-                DiaryBadge(label: entry.mood),
-                if (entry.attachments.isNotEmpty)
-                  DiaryBadge(
-                    label: '${entry.attachments.length} 张图',
-                    tone: DiaryBadgeTone.sand,
-                  ),
-                if (entry.commentCount > 0)
-                  DiaryBadge(
-                    label: '${entry.commentCount} 条评论',
-                    tone: DiaryBadgeTone.ink,
-                  ),
-                if (entry.updatedAt != null)
-                  DiaryBadge(
-                    label:
-                        '更新 ${formatDiaryShortDate(entry.updatedAt!)} ${formatDiaryTime(entry.updatedAt!)}',
-                    tone: DiaryBadgeTone.ink,
-                  ),
-              ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: DiaryPalette.rose.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(_radius),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: _stripeWidth,
+                  child: ColoredBox(color: moodColor),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 14, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    entry.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          color: DiaryPalette.ink,
+                                          fontWeight: FontWeight.w900,
+                                          height: 1.2,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.access_time_rounded,
+                                        size: 13,
+                                        color: DiaryPalette.wine.withValues(
+                                          alpha: 0.6,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '${formatDiaryDate(entry.createdAt)} ${formatDiaryTime(entry.createdAt)}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: DiaryPalette.wine,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            PopupMenuButton<_EntryAction>(
+                              icon: Icon(
+                                Icons.more_horiz_rounded,
+                                color: DiaryPalette.wine.withValues(alpha: 0.5),
+                                size: 20,
+                              ),
+                              onSelected: (action) {
+                                if (action == _EntryAction.edit) {
+                                  onEdit();
+                                  return;
+                                }
+                                onDelete();
+                              },
+                              itemBuilder: (context) => const [
+                                PopupMenuItem(
+                                  value: _EntryAction.edit,
+                                  child: Text('编辑'),
+                                ),
+                                PopupMenuItem(
+                                  value: _EntryAction.delete,
+                                  child: Text('删除'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          entry.summary,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: DiaryPalette.wine,
+                                height: 1.65,
+                              ),
+                        ),
+                        if (entry.attachments.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          _TimelineEntryPreview(
+                            rootDirectoryPath: rootDirectoryPath,
+                            attachments: entry.attachments,
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _MiniTag(
+                              label: entry.author,
+                              icon: Icons.person_rounded,
+                            ),
+                            _MiniTag(
+                              label: entry.mood,
+                              icon: Icons.favorite_rounded,
+                            ),
+                            if (entry.attachments.isNotEmpty)
+                              _MiniTag(
+                                label: '${entry.attachments.length}',
+                                icon: Icons.image_rounded,
+                              ),
+                            if (entry.commentCount > 0)
+                              _MiniTag(
+                                label: '${entry.commentCount}',
+                                icon: Icons.chat_bubble_rounded,
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Color _moodStripeColor(String mood) {
+  return switch (mood) {
+    '开心' => const Color(0xFFFF9B8E),
+    '安心' => const Color(0xFF8EC5A0),
+    '温柔' => const Color(0xFFF0B8D0),
+    '想念' => const Color(0xFFB8A0E0),
+    '真诚' => const Color(0xFFE0C070),
+    '治愈' => const Color(0xFF80C8D8),
+    '甜' => const Color(0xFFF0A0B8),
+    '难过' => const Color(0xFF7B9EC8),
+    '委屈' => const Color(0xFF9BA8C0),
+    '生气' => const Color(0xFFD08080),
+    '焦虑' => const Color(0xFFC8A870),
+    '孤独' => const Color(0xFF8CA0B8),
+    '失落' => const Color(0xFFA0A8B8),
+    _ => DiaryPalette.rose,
+  };
+}
+
+class _MiniTag extends StatelessWidget {
+  const _MiniTag({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: DiaryPalette.mist.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: DiaryPalette.rose.withValues(alpha: 0.7)),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: DiaryPalette.wine,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

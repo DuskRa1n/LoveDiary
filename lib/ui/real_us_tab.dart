@@ -214,7 +214,7 @@ class RealUsTab extends StatelessWidget {
               SizedBox(height: 14),
               Text('作者：Eric Chen'),
               SizedBox(height: 8),
-              Text('版本：1.2.12+66'),
+              Text('版本：1.3.5+80'),
               SizedBox(height: 14),
               Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
               SizedBox(height: 8),
