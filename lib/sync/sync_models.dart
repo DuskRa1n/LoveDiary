@@ -500,13 +500,7 @@ class SyncFilePolicy {
 }
 
 class AttachmentSyncPolicy {
-  const AttachmentSyncPolicy({
-    this.syncOriginals = true,
-    this.downloadOriginals = true,
-  });
-
-  final bool syncOriginals;
-  final bool downloadOriginals;
+  const AttachmentSyncPolicy();
 
   bool includeLocalPath(String relativePath) {
     if (!SyncFilePolicy.isSyncableBusinessPath(relativePath)) {
@@ -517,7 +511,7 @@ class AttachmentSyncPolicy {
       return true;
     }
     // 附件路径：只同步原图，跳过缩略图和预览图
-    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && syncOriginals;
+    return true;
   }
 
   bool includeRemotePath(String relativePath) {
@@ -529,7 +523,7 @@ class AttachmentSyncPolicy {
       return true;
     }
     // 附件路径：只下载原图
-    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && downloadOriginals;
+    return true;
   }
 
   bool includeTombstonePath(String relativePath) {
@@ -541,7 +535,7 @@ class AttachmentSyncPolicy {
       return true;
     }
     // 附件路径：只处理原图
-    return SyncFilePolicy.isOriginalAttachmentPath(relativePath) && syncOriginals;
+    return true;
   }
 }
 

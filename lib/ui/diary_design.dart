@@ -68,30 +68,276 @@ class DiaryBackground extends StatelessWidget {
       child: Stack(
         children: [
           const Positioned.fill(child: CustomPaint(painter: _PaperPainter())),
-          const Positioned(
-            left: -72,
-            top: -40,
-            child: _SoftOrb(size: 190, color: Color(0xFFFFC8C0)),
-          ),
-          const Positioned(
-            right: -64,
-            top: 132,
-            child: _SoftOrb(size: 148, color: Color(0xFFFFE0B9)),
-          ),
-          const Positioned(
-            right: 26,
-            bottom: 76,
-            child: _SoftOrb(size: 102, color: Color(0xFFFFD9D8)),
-          ),
-          const Positioned(
-            left: 28,
-            top: 96,
-            child: _FloatingHeart(size: 18, opacity: 0.42),
-          ),
-          const Positioned(right: 42, top: 70, child: _CloudPuff()),
-          const Positioned(left: -14, bottom: 72, child: _FlowerSilhouette()),
+          const Positioned.fill(child: _AmbientBackgroundMotion()),
         ],
       ),
+    );
+  }
+}
+
+class _AmbientBackgroundMotion extends StatefulWidget {
+  const _AmbientBackgroundMotion();
+
+  @override
+  State<_AmbientBackgroundMotion> createState() =>
+      _AmbientBackgroundMotionState();
+}
+
+class _AmbientBackgroundMotionState extends State<_AmbientBackgroundMotion>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 18600),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  double _wave(double durationMs) {
+    final phase = (_controller.value * 18600 / durationMs) * math.pi * 2;
+    return math.sin(phase);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduceMotion) {
+      return const _StaticAmbientBackground();
+    }
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Stack(
+          children: [
+            Positioned(
+              left: -72,
+              top: -40,
+              child: Transform.translate(
+                offset: Offset(7 * _wave(7800), 10 * _wave(7800)),
+                child: const _SoftOrb(size: 190, color: Color(0xFFFFC8C0)),
+              ),
+            ),
+            Positioned(
+              right: -64,
+              top: 132,
+              child: Transform.translate(
+                offset: Offset(-8 * _wave(9100), 12 * _wave(9100)),
+                child: const _SoftOrb(size: 148, color: Color(0xFFFFE0B9)),
+              ),
+            ),
+            Positioned(
+              right: 26,
+              bottom: 76,
+              child: Transform.translate(
+                offset: Offset(-5 * _wave(8600), 9 * _wave(8600)),
+                child: const _SoftOrb(size: 102, color: Color(0xFFFFD9D8)),
+              ),
+            ),
+            Positioned(
+              left: 28,
+              top: 96,
+              child: Transform.translate(
+                offset: Offset(0, 8 * _wave(4200)),
+                child: const _FloatingHeart(size: 18, opacity: 0.42),
+              ),
+            ),
+            Positioned(
+              right: 42,
+              top: 70,
+              child: Transform.translate(
+                offset: Offset(9 * _wave(7600), 0),
+                child: const _CloudPuff(),
+              ),
+            ),
+            Positioned(
+              left: -14,
+              bottom: 72,
+              child: Transform.translate(
+                offset: Offset(5 * _wave(9300), -10 * _wave(9300)),
+                child: const _FlowerSilhouette(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _StaticAmbientBackground extends StatelessWidget {
+  const _StaticAmbientBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Stack(
+      children: [
+        Positioned(
+          left: -72,
+          top: -40,
+          child: _SoftOrb(size: 190, color: Color(0xFFFFC8C0)),
+        ),
+        Positioned(
+          right: -64,
+          top: 132,
+          child: _SoftOrb(size: 148, color: Color(0xFFFFE0B9)),
+        ),
+        Positioned(
+          right: 26,
+          bottom: 76,
+          child: _SoftOrb(size: 102, color: Color(0xFFFFD9D8)),
+        ),
+        Positioned(
+          left: 28,
+          top: 96,
+          child: _FloatingHeart(size: 18, opacity: 0.42),
+        ),
+        Positioned(right: 42, top: 70, child: _CloudPuff()),
+        Positioned(left: -14, bottom: 72, child: _FlowerSilhouette()),
+      ],
+    );
+  }
+}
+
+class DiaryReveal extends StatefulWidget {
+  const DiaryReveal({
+    super.key,
+    required this.child,
+    this.delay = Duration.zero,
+    this.duration = const Duration(milliseconds: 520),
+    this.offset = const Offset(0, 0.05),
+    this.scaleFrom = 0.985,
+    this.curve = Curves.easeOutCubic,
+  });
+
+  final Widget child;
+  final Duration delay;
+  final Duration duration;
+  final Offset offset;
+  final double scaleFrom;
+  final Curve curve;
+
+  @override
+  State<DiaryReveal> createState() => _DiaryRevealState();
+}
+
+class _DiaryRevealState extends State<DiaryReveal> {
+  bool _visible = false;
+  bool _revealScheduled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_revealScheduled) {
+      return;
+    }
+
+    final disableAnimations =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (disableAnimations || widget.duration == Duration.zero) {
+      _visible = true;
+      _revealScheduled = true;
+      return;
+    }
+
+    _revealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (widget.delay > Duration.zero) {
+        await Future<void>.delayed(widget.delay);
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _visible = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final disableAnimations =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (disableAnimations) {
+      return widget.child;
+    }
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: _visible ? 1 : 0),
+      duration: widget.duration,
+      curve: widget.curve,
+      child: widget.child,
+      builder: (context, value, child) {
+        final translation = Offset.lerp(widget.offset, Offset.zero, value)!;
+        final scale = widget.scaleFrom + ((1 - widget.scaleFrom) * value);
+        return FractionalTranslation(
+          translation: translation,
+          child: Transform.scale(
+            scale: scale,
+            child: Opacity(opacity: value, child: child),
+          ),
+        );
+      },
+    );
+  }
+}
+
+const int _maxDecodedCoverExtent = 2048;
+
+class DiaryAmbientFloat extends StatefulWidget {
+  const DiaryAmbientFloat({
+    super.key,
+    required this.child,
+    this.duration = const Duration(milliseconds: 5600),
+    this.dx = 0,
+    this.dy = 8,
+    this.curve = Curves.easeInOut,
+  });
+
+  final Widget child;
+  final Duration duration;
+  final double dx;
+  final double dy;
+  final Curve curve;
+
+  @override
+  State<DiaryAmbientFloat> createState() => _DiaryAmbientFloatState();
+}
+
+class _DiaryAmbientFloatState extends State<DiaryAmbientFloat>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.duration,
+  )..repeat(reverse: true);
+
+  late final CurvedAnimation _curve = CurvedAnimation(
+    parent: _controller,
+    curve: widget.curve,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curve,
+      child: widget.child,
+      builder: (context, child) {
+        final value = (_curve.value * 2) - 1;
+        return Transform.translate(
+          offset: Offset(widget.dx * value, widget.dy * value),
+          child: child,
+        );
+      },
     );
   }
 }
@@ -215,27 +461,45 @@ class DiaryHero extends StatelessWidget {
                 if (footer != null) ...[const SizedBox(height: 22), footer!],
                 if (quote != null && quote!.trim().isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 11,
-                    ),
-                    decoration: BoxDecoration(
-                      color: DiaryPalette.white.withValues(alpha: 0.46),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: DiaryPalette.white.withValues(alpha: 0.72),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 420),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.08),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Container(
+                      key: ValueKey(quote),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
                       ),
-                    ),
-                    child: Text(
-                      quote!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: DiaryPalette.wine,
-                        fontWeight: FontWeight.w700,
-                        height: 1.45,
+                      decoration: BoxDecoration(
+                        color: DiaryPalette.white.withValues(alpha: 0.46),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: DiaryPalette.white.withValues(alpha: 0.72),
+                        ),
+                      ),
+                      child: Text(
+                        quote!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                          fontWeight: FontWeight.w700,
+                          height: 1.45,
+                        ),
                       ),
                     ),
                   ),
@@ -562,7 +826,7 @@ class DiaryCover extends StatelessWidget {
       );
     }
 
-    final path = attachment.thumbnailOrFallbackPath;
+    final path = attachment.path;
     if (path.isEmpty) {
       return _DiaryCoverPlaceholder(
         count: attachments.length,
@@ -575,6 +839,11 @@ class DiaryCover extends StatelessWidget {
 
     final file = File(resolveStoredPath(rootDirectoryPath, path));
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final cacheWidth = _coverCacheExtentFor(
+      width: width,
+      height: height,
+      devicePixelRatio: devicePixelRatio,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: backgroundColor,
@@ -595,7 +864,7 @@ class DiaryCover extends StatelessWidget {
           file,
           width: width,
           height: height,
-          cacheWidth: _cacheExtentFor(width ?? height, devicePixelRatio),
+          cacheWidth: cacheWidth,
           fit: fit,
           filterQuality: FilterQuality.medium,
           gaplessPlayback: true,
@@ -612,11 +881,21 @@ class DiaryCover extends StatelessWidget {
   }
 }
 
+int? _coverCacheExtentFor({
+  required double? width,
+  required double? height,
+  required double devicePixelRatio,
+}) {
+  final logicalExtent = math.max(width ?? 0, height ?? 0);
+  return _cacheExtentFor(logicalExtent, devicePixelRatio);
+}
+
 int? _cacheExtentFor(double? logicalExtent, double devicePixelRatio) {
   if (logicalExtent == null || !logicalExtent.isFinite || logicalExtent <= 0) {
     return null;
   }
-  return (logicalExtent * devicePixelRatio).ceil();
+  final physicalExtent = (logicalExtent * devicePixelRatio).ceil();
+  return math.min(physicalExtent, _maxDecodedCoverExtent);
 }
 
 class _DiaryCoverPlaceholder extends StatelessWidget {
@@ -964,15 +1243,26 @@ Route<T> buildDiaryRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
     pageBuilder: (context, animation, secondaryAnimation) => page,
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      final tween = Tween(begin: const Offset(0, 0.06), end: Offset.zero)
-          .chain(CurveTween(curve: Curves.easeOutCubic));
-      final fadeTween = Tween(begin: 0.0, end: 1.0)
-          .chain(CurveTween(curve: Curves.easeOut));
+      final tween = Tween(
+        begin: const Offset(0, 0.06),
+        end: Offset.zero,
+      ).chain(CurveTween(curve: Curves.easeOutCubic));
+      final fadeTween = Tween(
+        begin: 0.0,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeOut));
+      final scaleTween = Tween(
+        begin: 0.985,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeOutCubic));
       return FadeTransition(
         opacity: animation.drive(fadeTween),
-        child: SlideTransition(
-          position: animation.drive(tween),
-          child: child,
+        child: ScaleTransition(
+          scale: animation.drive(scaleTween),
+          child: SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          ),
         ),
       );
     },

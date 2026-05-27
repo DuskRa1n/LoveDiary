@@ -158,9 +158,7 @@ class DiaryAttachmentImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final path = preferOriginal
-        ? attachment.originalOrFallbackPath
-        : attachment.previewOrFallbackPath;
+    final path = attachment.path;
     if (path.isEmpty || kIsWeb) {
       return _AttachmentPlaceholder(width: width, height: height);
     }

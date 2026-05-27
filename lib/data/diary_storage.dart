@@ -27,16 +27,6 @@ class StorageMaintenanceResult {
   bool get changed => repairedEntries > 0 || migratedAttachments > 0;
 }
 
-class ImageCleanupResult {
-  const ImageCleanupResult({
-    required this.deletedOriginals,
-    required this.freedBytes,
-  });
-
-  final int deletedOriginals;
-  final int freedBytes;
-}
-
 class _AttachmentPreparationResult {
   const _AttachmentPreparationResult({
     required this.attachment,
@@ -160,9 +150,7 @@ class DiaryStorage {
     for (var i = 0; i < a.length; i++) {
       if (a[i].id != b[i].id ||
           a[i].path != b[i].path ||
-          a[i].thumbnailPath != b[i].thumbnailPath ||
-          a[i].previewPath != b[i].previewPath ||
-          a[i].originalPath != b[i].originalPath) {
+          a[i].originalName != b[i].originalName) {
         return false;
       }
     }
@@ -535,67 +523,30 @@ class DiaryStorage {
         : '${attachmentId}_$sanitizedStem';
     final sourceFile = File(sourcePath);
 
-    final thumbnailFileName = '$fileStem.jpg';
-    final previewFileName = '$fileStem.jpg';
-    final originalFileName = '$fileStem$extension';
+    final storedFileName = keepOriginal ? '$fileStem$extension' : '$fileStem.jpg';
+    final attachmentFile = File(
+      _join(attachmentDraftDirectory.path, storedFileName),
+    );
 
-    final thumbnailDirectory = Directory(
-      _join(attachmentDraftDirectory.path, 'thumbnails'),
-    );
-    final previewDirectory = Directory(
-      _join(attachmentDraftDirectory.path, 'previews'),
-    );
-    final originalDirectory = Directory(
-      _join(attachmentDraftDirectory.path, 'originals'),
-    );
-    await thumbnailDirectory.create(recursive: true);
-    await previewDirectory.create(recursive: true);
     if (keepOriginal) {
-      await originalDirectory.create(recursive: true);
-    }
-
-    final thumbnailFile = File(
-      _join(thumbnailDirectory.path, thumbnailFileName),
-    );
-    final previewFile = File(_join(previewDirectory.path, previewFileName));
-    await _writeResizedPhoto(
-      sourceFile: sourceFile,
-      targetFile: thumbnailFile,
-      maxDimension: 360,
-      jpegQuality: 78,
-    );
-    await _writeResizedPhoto(
-      sourceFile: sourceFile,
-      targetFile: previewFile,
-      maxDimension: 1600,
-      jpegQuality: 86,
-    );
-
-    String? originalPath;
-    if (keepOriginal) {
-      final originalFile = File(
-        _join(originalDirectory.path, originalFileName),
+      await sourceFile.copy(attachmentFile.path);
+    } else {
+      await _writeResizedPhoto(
+        sourceFile: sourceFile,
+        targetFile: attachmentFile,
+        maxDimension: 1600,
+        jpegQuality: 86,
       );
-      await sourceFile.copy(originalFile.path);
-      originalPath =
-          '$_draftsDirectoryName/$_draftAttachmentsDirectoryName/$attachmentId/originals/$originalFileName';
     }
 
-    final thumbnailPath =
-        '$_draftsDirectoryName/$_draftAttachmentsDirectoryName/$attachmentId/thumbnails/$thumbnailFileName';
-    final previewPath =
-        '$_draftsDirectoryName/$_draftAttachmentsDirectoryName/$attachmentId/previews/$previewFileName';
+    final storedPath =
+        '$_draftsDirectoryName/$_draftAttachmentsDirectoryName/$attachmentId/$storedFileName';
 
     return DiaryAttachment(
       id: attachmentId,
-      path: previewPath,
-      thumbnailPath: thumbnailPath,
-      previewPath: previewPath,
-      originalPath: originalPath,
+      path: storedPath,
       originalName: fileName,
       createdAt: now,
-      hasLocalOriginal: keepOriginal,
-      syncOriginal: keepOriginal,
     );
   }
 
@@ -620,66 +571,6 @@ class DiaryStorage {
           await file.delete();
         }
       }
-    }
-  }
-
-  Future<void> ensureLocalThumbnails(DiaryAttachment attachment) async {
-    final rootDirectory = await _ensureRootDirectory();
-    final rootPath = rootDirectory.path;
-
-    final originalPath = _safeStoredAttachmentPath(attachment.originalPath);
-    if (originalPath == null || originalPath.isEmpty) {
-      return;
-    }
-
-    final originalFile = File(_resolveStoredPath(rootPath, originalPath));
-    if (!await originalFile.exists()) {
-      return;
-    }
-
-    final thumbnailPath = _safeStoredAttachmentPath(attachment.thumbnailPath);
-    final previewPath = _safeStoredAttachmentPath(attachment.previewPath);
-
-    if (thumbnailPath == null ||
-        thumbnailPath.isEmpty ||
-        !await _storedFileExists(rootPath, thumbnailPath)) {
-      final segments = originalPath.split('/');
-      final entryId = segments.length >= 2 ? segments[1] : 'unknown';
-      final attachmentId = attachment.id;
-      final ext = _extensionFromFileName(
-        attachment.originalName.isEmpty
-            ? originalPath
-            : attachment.originalName,
-      );
-      final targetPath =
-          '$_attachmentsDirectoryName/$entryId/$attachmentId/thumbnails/thumb$ext';
-      await _writeResizedPhoto(
-        sourceFile: originalFile,
-        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
-        maxDimension: 360,
-        jpegQuality: 78,
-      );
-    }
-
-    if (previewPath == null ||
-        previewPath.isEmpty ||
-        !await _storedFileExists(rootPath, previewPath)) {
-      final segments = originalPath.split('/');
-      final entryId = segments.length >= 2 ? segments[1] : 'unknown';
-      final attachmentId = attachment.id;
-      final ext = _extensionFromFileName(
-        attachment.originalName.isEmpty
-            ? originalPath
-            : attachment.originalName,
-      );
-      final targetPath =
-          '$_attachmentsDirectoryName/$entryId/$attachmentId/previews/preview$ext';
-      await _writeResizedPhoto(
-        sourceFile: originalFile,
-        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
-        maxDimension: 1600,
-        jpegQuality: 86,
-      );
     }
   }
 
@@ -1018,7 +909,6 @@ class DiaryStorage {
     var migratedAttachments = 0;
     var missingAttachments = 0;
     final obsoletePaths = <String>[];
-    final repaired = <DiaryEntry>[];
 
     for (final entry in entries) {
       var entryChanged = false;
@@ -1042,15 +932,15 @@ class DiaryStorage {
 
       if (entryChanged) {
         repairedEntries += 1;
-        repaired.add(entry.copyWith(attachments: attachments));
-      } else {
-        repaired.add(entry);
+        final repairedEntry = entry.copyWith(attachments: attachments);
+        await _writeJsonAtomically(
+          _entryFileAt(rootDirectory.path, repairedEntry.id),
+          repairedEntry.toJson(),
+        );
+        await _updateManifestCacheEntry(rootDirectory.path, repairedEntry);
       }
     }
 
-    if (repairedEntries > 0) {
-      await saveEntries(repaired);
-    }
     if (obsoletePaths.isNotEmpty) {
       await _appendTombstones(obsoletePaths);
       await _deleteObsoleteSyncFiles(rootDirectory.path, obsoletePaths);
@@ -1060,90 +950,6 @@ class DiaryStorage {
       repairedEntries: repairedEntries,
       migratedAttachments: migratedAttachments,
       missingAttachments: missingAttachments,
-    );
-  }
-
-  Future<ImageCleanupResult> purgeLocalOriginals({
-    Duration olderThan = const Duration(days: 30),
-  }) async {
-    final rootDirectory = await _ensureRootDirectory();
-    final entries = await loadEntries();
-    if (entries.isEmpty) {
-      return const ImageCleanupResult(deletedOriginals: 0, freedBytes: 0);
-    }
-
-    final cutoff = nowProvider().subtract(olderThan);
-    var changed = false;
-    var deletedOriginals = 0;
-    var freedBytes = 0;
-    final updatedEntries = <DiaryEntry>[];
-
-    for (final entry in entries) {
-      var entryChanged = false;
-      final attachments = <DiaryAttachment>[];
-      for (final attachment in entry.attachments) {
-        final originalPath = _safeStoredAttachmentPath(attachment.originalPath);
-        if (originalPath == null ||
-            originalPath.isEmpty ||
-            (attachment.previewPath == null &&
-                attachment.thumbnailPath == null)) {
-          if (attachment.originalPath != originalPath ||
-              attachment.hasLocalOriginal) {
-            attachments.add(
-              attachment.copyWith(
-                clearOriginalPath: originalPath == null,
-                originalPath: originalPath,
-                hasLocalOriginal: false,
-              ),
-            );
-            entryChanged = true;
-            changed = true;
-          } else {
-            attachments.add(attachment);
-          }
-          continue;
-        }
-
-        final originalFile = File(
-          _resolveStoredPath(rootDirectory.path, originalPath),
-        );
-        if (!await originalFile.exists()) {
-          if (attachment.hasLocalOriginal) {
-            attachments.add(attachment.copyWith(hasLocalOriginal: false));
-            entryChanged = true;
-            changed = true;
-          } else {
-            attachments.add(attachment);
-          }
-          continue;
-        }
-
-        final stat = await originalFile.stat();
-        if (stat.modified.isAfter(cutoff)) {
-          attachments.add(attachment);
-          continue;
-        }
-
-        freedBytes += stat.size;
-        await originalFile.delete();
-        deletedOriginals += 1;
-        entryChanged = true;
-        changed = true;
-        attachments.add(attachment.copyWith(hasLocalOriginal: false));
-      }
-
-      updatedEntries.add(
-        entryChanged ? entry.copyWith(attachments: attachments) : entry,
-      );
-    }
-
-    if (changed) {
-      await saveEntries(updatedEntries);
-    }
-
-    return ImageCleanupResult(
-      deletedOriginals: deletedOriginals,
-      freedBytes: freedBytes,
     );
   }
 
@@ -1327,7 +1133,6 @@ class DiaryStorage {
       );
       if (attachment != null) {
         // 如果有原图但缺少缩略图/预览图，本地按需生成
-        await ensureLocalThumbnails(attachment);
         attachments.add(attachment);
       }
     }
@@ -1344,40 +1149,18 @@ class DiaryStorage {
       attachment.id,
       fallbackPrefix: 'att_$index',
     );
-    final thumbnailPath = _safeStoredAttachmentPath(
-      attachment.thumbnailPath,
+    final path = _safeStoredAttachmentPath(
+      attachment.path,
       allowDrafts: allowDrafts,
     );
-    final previewPath = _safeStoredAttachmentPath(
-      attachment.previewPath,
-      allowDrafts: allowDrafts,
-    );
-    final originalPath = _safeStoredAttachmentPath(
-      attachment.originalPath,
-      allowDrafts: allowDrafts,
-    );
-    final path =
-        _safeStoredAttachmentPath(attachment.path, allowDrafts: allowDrafts) ??
-        previewPath ??
-        thumbnailPath ??
-        originalPath;
 
     if (path == null || path.isEmpty) {
       return null;
     }
 
-    final hasLocalOriginal =
-        originalPath != null && await _storedFileExists(rootPath, originalPath);
     return attachment.copyWith(
       id: attachmentId,
       path: path,
-      thumbnailPath: thumbnailPath,
-      previewPath: previewPath,
-      originalPath: originalPath,
-      clearThumbnailPath: thumbnailPath == null,
-      clearPreviewPath: previewPath == null,
-      clearOriginalPath: originalPath == null,
-      hasLocalOriginal: hasLocalOriginal,
     );
   }
 
@@ -1430,94 +1213,41 @@ class DiaryStorage {
       relativePath: sourcePath,
     );
 
-    var thumbnailPath = attachment.thumbnailPath;
-    var previewPath = attachment.previewPath;
-    var originalPath = attachment.originalPath;
     var changed = false;
     final obsoletePaths = <String>[];
-
-    if (thumbnailPath == null ||
-        thumbnailPath.isEmpty ||
-        !await _storedFileExists(rootPath, thumbnailPath)) {
-      final targetPath = _attachmentRolePath(
-        entryId: entryId,
-        attachmentId: attachment.id,
-        role: 'thumbnails',
-        extension: '.jpg',
-      );
-      await _writeResizedPhoto(
-        sourceFile: sourceFile,
-        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
-        maxDimension: 360,
-        jpegQuality: 78,
-      );
-      thumbnailPath = targetPath;
-      changed = true;
-    }
-
-    if (previewPath == null ||
-        previewPath.isEmpty ||
-        !await _storedFileExists(rootPath, previewPath)) {
-      final targetPath = _attachmentRolePath(
-        entryId: entryId,
-        attachmentId: attachment.id,
-        role: 'previews',
-        extension: '.jpg',
-      );
-      await _writeResizedPhoto(
-        sourceFile: sourceFile,
-        targetFile: File(_resolveStoredPath(rootPath, targetPath)),
-        maxDimension: 1600,
-        jpegQuality: 86,
-      );
-      previewPath = targetPath;
-      changed = true;
-    }
-
-    if ((originalPath == null ||
-            originalPath.isEmpty ||
-            !await _storedFileExists(rootPath, originalPath)) &&
-        isLegacySource) {
-      final extension = _extensionFromFileName(
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    final targetPath = _attachmentMainPath(
+      entryId: safeEntryId,
+      attachmentId: attachment.id,
+      extension: _extensionFromFileName(
         attachment.originalName.isEmpty ? sourcePath : attachment.originalName,
-      );
-      final targetPath = _attachmentRolePath(
-        entryId: entryId,
-        attachmentId: attachment.id,
-        role: 'originals',
-        extension: extension,
-      );
-      final originalFile = File(_resolveStoredPath(rootPath, targetPath));
-      await originalFile.parent.create(recursive: true);
-      if (sourceFile.path != originalFile.path) {
-        await sourceFile.copy(originalFile.path);
+      ),
+      originalName: attachment.originalName,
+    );
+    final targetFile = File(_resolveStoredPath(rootPath, targetPath));
+    await targetFile.parent.create(recursive: true);
+
+    if (sourcePath != targetPath || isLegacySource) {
+      if (sourceFile.path != targetFile.path) {
+        if (await targetFile.exists()) {
+          await targetFile.delete();
+        }
+        await sourceFile.copy(targetFile.path);
         if (_shouldDeleteOriginalAfterMove(rootPath, sourceFile.path)) {
           obsoletePaths.add(sourcePath);
         }
       }
-      originalPath = targetPath;
       changed = true;
     }
 
-    final nextPath = previewPath;
     final nextAttachment = attachment.copyWith(
-      path: nextPath,
-      thumbnailPath: thumbnailPath,
-      previewPath: previewPath,
-      originalPath: originalPath,
-      hasLocalOriginal:
-          originalPath != null &&
-          originalPath.isNotEmpty &&
-          await _storedFileExists(rootPath, originalPath),
-      syncOriginal: attachment.syncOriginal,
+      path: targetPath,
     );
 
-    if (!changed &&
-        (nextAttachment.path != attachment.path ||
-            nextAttachment.thumbnailPath != attachment.thumbnailPath ||
-            nextAttachment.previewPath != attachment.previewPath ||
-            nextAttachment.originalPath != attachment.originalPath ||
-            nextAttachment.hasLocalOriginal != attachment.hasLocalOriginal)) {
+    if (!changed && nextAttachment.path != attachment.path) {
       changed = true;
     }
 
@@ -1542,63 +1272,14 @@ class DiaryStorage {
       await entryDirectory.create(recursive: true);
     }
 
-    if (attachment.thumbnailPath != null ||
-        attachment.previewPath != null ||
-        attachment.originalPath != null) {
-      final thumbnailPath = await _normalizeAttachmentPathForEntry(
-        rootPath: rootDirectory.path,
-        entryId: entryId,
-        attachment: attachment,
-        sourcePath: attachment.thumbnailPath,
-        role: 'thumbnails',
-        fallbackExtension: '.png',
-      );
-      final previewPath = await _normalizeAttachmentPathForEntry(
-        rootPath: rootDirectory.path,
-        entryId: entryId,
-        attachment: attachment,
-        sourcePath: attachment.previewPath,
-        role: 'previews',
-        fallbackExtension: '.png',
-      );
-      final originalPath = await _normalizeAttachmentPathForEntry(
-        rootPath: rootDirectory.path,
-        entryId: entryId,
-        attachment: attachment,
-        sourcePath: attachment.originalPath,
-        role: 'originals',
-        fallbackExtension: _extensionFromFileName(attachment.originalName),
-      );
-      final path =
-          previewPath ??
-          thumbnailPath ??
-          originalPath ??
-          await _normalizeLegacyAttachmentPathForEntry(
-            rootPath: rootDirectory.path,
-            entryId: entryId,
-            attachment: attachment,
-          );
-
-      return attachment.copyWith(
-        path: path,
-        thumbnailPath: thumbnailPath,
-        previewPath: previewPath,
-        originalPath: originalPath,
-        clearThumbnailPath: thumbnailPath == null,
-        clearPreviewPath: previewPath == null,
-        clearOriginalPath: originalPath == null,
-        hasLocalOriginal:
-            originalPath != null &&
-            await _storedFileExists(rootDirectory.path, originalPath),
-      );
-    }
-
     final path = await _normalizeLegacyAttachmentPathForEntry(
       rootPath: rootDirectory.path,
       entryId: entryId,
       attachment: attachment,
     );
-    return attachment.copyWith(path: path);
+    return attachment.copyWith(
+      path: path,
+    );
   }
 
   Future<String> _normalizeLegacyAttachmentPathForEntry({
@@ -1662,67 +1343,18 @@ class DiaryStorage {
           await sourceFile.delete();
         }
       }
-    }
-    return targetRelativePath;
-  }
-
-  Future<String?> _normalizeAttachmentPathForEntry({
-    required String rootPath,
-    required String entryId,
-    required DiaryAttachment attachment,
-    required String? sourcePath,
-    required String role,
-    required String fallbackExtension,
-  }) async {
-    if (sourcePath == null || sourcePath.isEmpty) {
-      return null;
-    }
-
-    final currentRelativePath = _safeStoredAttachmentPath(
-      sourcePath,
-      allowDrafts: true,
-    );
-    if (currentRelativePath == null) {
-      return null;
-    }
-
-    final currentFileName = _fileNameFromPath(currentRelativePath);
-    final extension = _extensionFromFileName(
-      currentFileName.isEmpty ? fallbackExtension : currentFileName,
-    );
-    final safeEntryId = _normalizeSafeStorageId(
-      entryId,
-      fallbackPrefix: 'entry',
-    );
-    final safeAttachmentId = _normalizeSafeStorageId(
-      attachment.id,
-      fallbackPrefix: 'att',
-    );
-    final targetFileName = '$safeAttachmentId$extension';
-    final targetRelativePath =
-        '$_attachmentsDirectoryName/$safeEntryId/$role/$targetFileName';
-    final targetFile = File(
-      _join(
-        rootPath,
-        _attachmentsDirectoryName,
-        safeEntryId,
-        role,
-        targetFileName,
-      ),
-    );
-    await targetFile.parent.create(recursive: true);
-
-    if (currentRelativePath == targetRelativePath &&
-        await targetFile.exists()) {
       return targetRelativePath;
     }
 
-    final sourceFile = File(_resolveStoredPath(rootPath, currentRelativePath));
-    if (!await sourceFile.exists()) {
-      return currentRelativePath;
-    }
-
-    if (sourceFile.path != targetFile.path) {
+    final legacySource = await _findLegacyAttachmentSourceFile(
+      rootPath: rootPath,
+      entryId: safeEntryId,
+      attachment: attachment,
+      excludePath: currentRelativePath,
+    );
+    if (legacySource != null) {
+      final sourceRelativePath = legacySource.$1;
+      final sourceFile = legacySource.$2;
       if (await targetFile.exists()) {
         await targetFile.delete();
       }
@@ -1730,6 +1362,7 @@ class DiaryStorage {
       if (_shouldDeleteOriginalAfterMove(rootPath, sourceFile.path)) {
         await sourceFile.delete();
       }
+      await _appendTombstones([sourceRelativePath]);
     }
     return targetRelativePath;
   }
@@ -1739,10 +1372,11 @@ class DiaryStorage {
     required DiaryAttachment attachment,
   }) async {
     final candidates = <String?>[
-      attachment.originalPath,
       attachment.path,
-      attachment.previewPath,
-      attachment.thumbnailPath,
+      ..._legacyAttachmentCandidates(
+        entryId: _entryIdFromAttachmentPath(attachment.path),
+        attachment: attachment,
+      ),
     ];
 
     for (final candidate in candidates) {
@@ -1764,12 +1398,63 @@ class DiaryStorage {
     return null;
   }
 
-  Future<bool> _storedFileExists(String rootPath, String storedPath) async {
-    final normalized = _safeStoredAttachmentPath(storedPath, allowDrafts: true);
-    if (normalized == null) {
-      return false;
+  Future<(String, File)?> _findLegacyAttachmentSourceFile({
+    required String rootPath,
+    required String entryId,
+    required DiaryAttachment attachment,
+    String? excludePath,
+  }) async {
+    final candidates = _legacyAttachmentCandidates(
+      entryId: entryId,
+      attachment: attachment,
+    );
+    for (final candidate in candidates) {
+      if (candidate.isEmpty || candidate == excludePath) {
+        continue;
+      }
+      final file = File(_resolveStoredPath(rootPath, candidate));
+      if (await file.exists()) {
+        return (candidate, file);
+      }
     }
-    return File(_resolveStoredPath(rootPath, normalized)).exists();
+    return null;
+  }
+
+  List<String> _legacyAttachmentCandidates({
+    required String? entryId,
+    required DiaryAttachment attachment,
+  }) {
+    if (entryId == null || entryId.isEmpty) {
+      return const [];
+    }
+
+    final safeEntryId = _normalizeSafeStorageId(
+      entryId,
+      fallbackPrefix: 'entry',
+    );
+    final safeAttachmentId = _normalizeSafeStorageId(
+      attachment.id,
+      fallbackPrefix: 'att',
+    );
+    final extension = _extensionFromFileName(
+      attachment.originalName.isEmpty ? attachment.path : attachment.originalName,
+    );
+
+    return [
+      '$_attachmentsDirectoryName/$safeEntryId/originals/$safeAttachmentId$extension',
+      '$_attachmentsDirectoryName/$safeEntryId/previews/$safeAttachmentId.jpg',
+      '$_attachmentsDirectoryName/$safeEntryId/thumbnails/$safeAttachmentId.jpg',
+    ];
+  }
+
+  String? _entryIdFromAttachmentPath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    if (parts.length < 3 || parts.first != _attachmentsDirectoryName) {
+      return null;
+    }
+    final candidate = parts[1];
+    return SyncFilePolicy.isSafeId(candidate) ? candidate : null;
   }
 
   Future<void> _deleteObsoleteSyncFiles(
@@ -1835,11 +1520,11 @@ class DiaryStorage {
         parts[1] == entryId;
   }
 
-  String _attachmentRolePath({
+  String _attachmentMainPath({
     required String entryId,
     required String attachmentId,
-    required String role,
     required String extension,
+    required String originalName,
   }) {
     final safeEntryId = _normalizeSafeStorageId(
       entryId,
@@ -1850,7 +1535,13 @@ class DiaryStorage {
       fallbackPrefix: 'att',
     );
     final safeExtension = extension.isEmpty ? '.jpg' : extension;
-    return '$_attachmentsDirectoryName/$safeEntryId/$role/$safeAttachmentId$safeExtension';
+    final safeStem = _sanitizeFileName(
+      _stemFromFileName(originalName.isEmpty ? attachmentId : originalName),
+    );
+    final targetFileName = safeStem.isEmpty
+        ? '$safeAttachmentId$safeExtension'
+        : '${safeAttachmentId}_$safeStem$safeExtension';
+    return '$_attachmentsDirectoryName/$safeEntryId/$targetFileName';
   }
 
   List<DiaryAttachment> _collectRemovedAttachments({
@@ -1917,6 +1608,16 @@ class DiaryStorage {
 
   Future<void> _writeStringAtomically(File file, String content) async {
     await file.parent.create(recursive: true);
+    if (await file.exists()) {
+      try {
+        final existing = await file.readAsString();
+        if (existing == content) {
+          return;
+        }
+      } catch (_) {
+        // Fall through and rewrite the file if the current contents cannot be read.
+      }
+    }
     final temporaryFile = File(
       '${file.path}.tmp.${DateTime.now().microsecondsSinceEpoch}',
     );
@@ -2449,11 +2150,6 @@ class DiaryStorage {
 
   String _sanitizeFileName(String fileName) {
     return fileName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-  }
-
-  String _fileNameFromPath(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    return normalized.split('/').last;
   }
 
   static CoupleProfile seedProfile() {

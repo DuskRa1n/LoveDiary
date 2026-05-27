@@ -33,7 +33,61 @@ class RealTodayTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          DiaryHero(
+          DiaryReveal(
+            child: DiaryHero(
+              eyebrow: '首页',
+              title: '${profile.currentUserName} 和 ${profile.partnerName}',
+              trailing: _DaysSeal(days: togetherDays),
+              quote: startupQuote,
+              footer: _HeroFooter(
+                anniversary: profile.togetherSince,
+                entries: entries,
+                schedules: schedules,
+              ),
+            ),
+          ),
+          const SizedBox(height: 22),
+          DiaryReveal(
+            delay: const Duration(milliseconds: 120),
+            offset: const Offset(0, 0.08),
+            child: _DiaryHeatmapPanel(
+              entries: entries,
+              schedules: schedules,
+              onOpenSchedules: onOpenSchedules,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class TodayOverviewContent extends StatelessWidget {
+  const TodayOverviewContent({
+    super.key,
+    required this.profile,
+    required this.entries,
+    required this.schedules,
+    required this.startupQuote,
+    required this.onOpenSchedules,
+  });
+
+  final CoupleProfile profile;
+  final List<DiaryEntry> entries;
+  final List<ScheduleItem> schedules;
+  final String startupQuote;
+  final ValueChanged<DateTime> onOpenSchedules;
+
+  @override
+  Widget build(BuildContext context) {
+    final togetherDays =
+        DateTime.now().difference(profile.togetherSince).inDays + 1;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DiaryReveal(
+          child: DiaryHero(
             eyebrow: '首页',
             title: '${profile.currentUserName} 和 ${profile.partnerName}',
             trailing: _DaysSeal(days: togetherDays),
@@ -44,14 +98,18 @@ class RealTodayTab extends StatelessWidget {
               schedules: schedules,
             ),
           ),
-          const SizedBox(height: 22),
-          _DiaryHeatmapPanel(
+        ),
+        const SizedBox(height: 22),
+        DiaryReveal(
+          delay: const Duration(milliseconds: 120),
+          offset: const Offset(0, 0.08),
+          child: _DiaryHeatmapPanel(
             entries: entries,
             schedules: schedules,
             onOpenSchedules: onOpenSchedules,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -358,13 +416,31 @@ class _DiaryHeatmapPanelState extends State<_DiaryHeatmapPanel> {
               ],
             ),
             const SizedBox(height: 4),
-            _MonthHeatmapGrid(
-              monthStart: monthStart,
-              today: today,
-              countsByDay: monthData.countsByDay,
-              scheduleDays: monthData.scheduleDays,
-              maxCount: monthData.maxCount,
-              onDaySelected: widget.onOpenSchedules,
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 320),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.04, 0),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                );
+              },
+              child: _MonthHeatmapGrid(
+                key: ValueKey(_monthLabel(_visibleMonth)),
+                monthStart: monthStart,
+                today: today,
+                countsByDay: monthData.countsByDay,
+                scheduleDays: monthData.scheduleDays,
+                maxCount: monthData.maxCount,
+                onDaySelected: widget.onOpenSchedules,
+              ),
             ),
           ],
         ),
@@ -387,6 +463,7 @@ class _MonthHeatmapData {
 
 class _MonthHeatmapGrid extends StatelessWidget {
   const _MonthHeatmapGrid({
+    super.key,
     required this.monthStart,
     required this.today,
     required this.countsByDay,

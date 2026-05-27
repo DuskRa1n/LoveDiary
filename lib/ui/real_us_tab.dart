@@ -18,6 +18,7 @@ class RealUsTab extends StatelessWidget {
     required this.onConnectOneDrive,
     required this.onOpenOneDriveSettings,
     this.topContentInset = 0,
+    this.sheetMode = false,
   });
 
   final CoupleProfile profile;
@@ -31,6 +32,7 @@ class RealUsTab extends StatelessWidget {
   final Future<void> Function() onConnectOneDrive;
   final Future<void> Function() onOpenOneDriveSettings;
   final double topContentInset;
+  final bool sheetMode;
 
   @override
   Widget build(BuildContext context) {
@@ -47,46 +49,56 @@ class RealUsTab extends StatelessWidget {
 
     return DiaryPage(
       showBackground: false,
-      respectTopSafeArea: true,
-      padding: EdgeInsets.fromLTRB(18, 14 + topContentInset, 18, 112),
+      respectTopSafeArea: !sheetMode,
+      padding: sheetMode
+          ? const EdgeInsets.fromLTRB(18, 18, 18, 32)
+          : EdgeInsets.fromLTRB(18, 14 + topContentInset, 18, 112),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ProfileHeader(profile: profile, togetherDays: togetherDays),
+          DiaryReveal(
+            child: _ProfileHeader(profile: profile, togetherDays: togetherDays),
+          ),
           const SizedBox(height: 18),
-          DiaryPanel(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Column(
-              children: [
-                _SettingsTile(
-                  icon: Icons.favorite_rounded,
-                  title: '关系信息',
-                  onTap: onEditProfile,
-                ),
-                const _SettingsDivider(),
-                _SettingsTile(
-                  icon: Icons.cloud_sync_rounded,
-                  title: 'OneDrive 同步',
-                  subtitle: _oneDriveSubtitle(),
-                  trailing: _StatusPill(
-                    label: oneDriveConfig == null ? '未连接' : '已连接',
-                    active: oneDriveConfig != null,
+          DiaryReveal(
+            delay: const Duration(milliseconds: 110),
+            offset: const Offset(0, 0.06),
+            child: DiaryPanel(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Column(
+                children: [
+                  _SettingsTile(
+                    icon: Icons.favorite_rounded,
+                    title: '关系信息',
+                    subtitle: '名字、纪念日、主视角',
+                    onTap: onEditProfile,
                   ),
-                  onTap: oneDriveConfig == null
-                      ? () => onConnectOneDrive()
-                      : onOpenOneDriveSettings,
-                ),
-                const _SettingsDivider(),
-                _SettingsTile(
-                  icon: Icons.tune_rounded,
-                  title: '其他设置',
-                  onTap: () => _openOtherSettings(
-                    context,
-                    commentCount: commentCount,
-                    attachmentCount: attachmentCount,
+                  const _SettingsDivider(),
+                  _SettingsTile(
+                    icon: Icons.cloud_sync_rounded,
+                    title: 'OneDrive 同步',
+                    subtitle: _oneDriveSubtitle(),
+                    trailing: _StatusPill(
+                      label: oneDriveConfig == null ? '未连接' : '已连接',
+                      active: oneDriveConfig != null,
+                    ),
+                    onTap: oneDriveConfig == null
+                        ? () => onConnectOneDrive()
+                        : onOpenOneDriveSettings,
                   ),
-                ),
-              ],
+                  const _SettingsDivider(),
+                  _SettingsTile(
+                    icon: Icons.tune_rounded,
+                    title: '其他设置',
+                    subtitle: '备份同步、回收站、关于',
+                    onTap: () => _openOtherSettings(
+                      context,
+                      commentCount: commentCount,
+                      attachmentCount: attachmentCount,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -98,16 +110,31 @@ class RealUsTab extends StatelessWidget {
             crossAxisSpacing: 10,
             childAspectRatio: 0.92,
             children: [
-              DiaryStatBlock(label: '日记', value: '${entries.length}'),
-              DiaryStatBlock(
-                label: '评论',
-                value: '$commentCount',
-                accent: DiaryBadgeTone.ink,
+              DiaryReveal(
+                delay: const Duration(milliseconds: 190),
+                scaleFrom: 0.96,
+                offset: const Offset(0, 0.06),
+                child: DiaryStatBlock(label: '日记', value: '${entries.length}'),
               ),
-              DiaryStatBlock(
-                label: '图片',
-                value: '$attachmentCount',
-                accent: DiaryBadgeTone.sand,
+              DiaryReveal(
+                delay: const Duration(milliseconds: 240),
+                scaleFrom: 0.96,
+                offset: const Offset(0, 0.06),
+                child: DiaryStatBlock(
+                  label: '评论',
+                  value: '$commentCount',
+                  accent: DiaryBadgeTone.ink,
+                ),
+              ),
+              DiaryReveal(
+                delay: const Duration(milliseconds: 290),
+                scaleFrom: 0.96,
+                offset: const Offset(0, 0.06),
+                child: DiaryStatBlock(
+                  label: '图片',
+                  value: '$attachmentCount',
+                  accent: DiaryBadgeTone.sand,
+                ),
               ),
             ],
           ),
@@ -122,18 +149,12 @@ class RealUsTab extends StatelessWidget {
     }
     if (lastSyncFailedAt != null &&
         (lastSyncedAt == null || lastSyncFailedAt!.isAfter(lastSyncedAt!))) {
-      final failedText =
-          '${formatDiaryDate(lastSyncFailedAt!)} ${formatDiaryTime(lastSyncFailedAt!)}';
-      final message = lastSyncFailureMessage;
-      if (message != null && message.isNotEmpty) {
-        return '最近失败：$failedText';
-      }
-      return '最近失败：$failedText';
+      return '最近失败：${formatDiaryDate(lastSyncFailedAt!)} ${formatDiaryTime(lastSyncFailedAt!)}';
     }
-    final syncedText = lastSyncedAt == null
-        ? '尚未同步'
-        : '${formatDiaryDate(lastSyncedAt!)} ${formatDiaryTime(lastSyncedAt!)}';
-    return '最近同步：$syncedText';
+    if (lastSyncedAt == null) {
+      return '尚未同步';
+    }
+    return '最近同步：${formatDiaryDate(lastSyncedAt!)} ${formatDiaryTime(lastSyncedAt!)}';
   }
 
   void _openOtherSettings(
@@ -173,6 +194,7 @@ class RealUsTab extends StatelessWidget {
                       _SettingsTile(
                         icon: Icons.restore_from_trash_rounded,
                         title: '回收站',
+                        subtitle: '删除后的日记会先保留 7 天',
                         onTap: () {
                           Navigator.of(sheetContext).pop();
                           onOpenDustbin();
@@ -183,7 +205,7 @@ class RealUsTab extends StatelessWidget {
                         icon: Icons.info_outline_rounded,
                         title: '关于此应用',
                         subtitle:
-                            '${entries.length} 篇日记 · $commentCount 条评论 · $attachmentCount 张图',
+                            '${entries.length} 篇日记 · $commentCount 条评论 · $attachmentCount 张图片',
                         onTap: () {
                           Navigator.of(sheetContext).pop();
                           _showAbout(context);
@@ -206,21 +228,32 @@ class RealUsTab extends StatelessWidget {
       builder: (context) {
         return AlertDialog(
           title: const Text('关于恋爱日记'),
-          content: const Column(
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('两个人私用的恋爱日记。'),
-              SizedBox(height: 14),
-              Text('作者：Eric Chen'),
-              SizedBox(height: 8),
-              Text('版本：1.3.5+80'),
-              SizedBox(height: 14),
-              Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
-              SizedBox(height: 8),
-              Text('OneDrive 是当前唯一同步方式。'),
-              SizedBox(height: 14),
-              Text('愿这些普通日子，都被好好留下。'),
+              const Text('两个人私用的恋爱日记。'),
+              const SizedBox(height: 14),
+              const Text('作者：Eric Chen'),
+              const SizedBox(height: 8),
+              const Text('版本：1.4.10+91'),
+              const SizedBox(height: 14),
+              const Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
+              const SizedBox(height: 8),
+              const Text('OneDrive 是主要同步方式，坚果云保留为备用方案。'),
+              if (lastSyncFailureMessage != null &&
+                  lastSyncFailureMessage!.trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '最近同步提示：${lastSyncFailureMessage!.trim()}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DiaryPalette.wine,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              const Text('愿你们把重要的小事，都认真留住。'),
             ],
           ),
           actions: [
@@ -281,27 +314,32 @@ class _AvatarBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initial = label.trim().isEmpty ? '?' : label.trim().characters.first;
-    return Container(
-      width: 54,
-      height: 54,
-      decoration: BoxDecoration(
-        color: accent ? DiaryPalette.mist : const Color(0xFFFFF4E8),
-        shape: BoxShape.circle,
-        border: Border.all(color: DiaryPalette.white, width: 3),
-        boxShadow: [
-          BoxShadow(
-            color: DiaryPalette.rose.withValues(alpha: 0.18),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
+    return DiaryAmbientFloat(
+      duration: Duration(milliseconds: accent ? 4200 : 5100),
+      dx: accent ? 0 : 2,
+      dy: accent ? 4 : 6,
+      child: Container(
+        width: 54,
+        height: 54,
+        decoration: BoxDecoration(
+          color: accent ? DiaryPalette.mist : const Color(0xFFFFF4E8),
+          shape: BoxShape.circle,
+          border: Border.all(color: DiaryPalette.white, width: 3),
+          boxShadow: [
+            BoxShadow(
+              color: DiaryPalette.rose.withValues(alpha: 0.18),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          initial,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: accent ? DiaryPalette.rose : DiaryPalette.tea,
+            fontWeight: FontWeight.w900,
           ),
-        ],
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        initial,
-        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-          color: accent ? DiaryPalette.rose : DiaryPalette.tea,
-          fontWeight: FontWeight.w900,
         ),
       ),
     );
@@ -402,9 +440,21 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DiaryBadge(
-      label: label,
-      tone: active ? DiaryBadgeTone.rose : DiaryBadgeTone.ink,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 260),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(scale: animation, child: child),
+        );
+      },
+      child: DiaryBadge(
+        key: ValueKey<String>('$label-$active'),
+        label: label,
+        tone: active ? DiaryBadgeTone.rose : DiaryBadgeTone.ink,
+      ),
     );
   }
 }

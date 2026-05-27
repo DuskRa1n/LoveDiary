@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -21,8 +21,7 @@ import 'sync/sync_foreground_guard.dart';
 import 'ui/diary_design.dart';
 import 'ui/daily_quotes.dart';
 import 'ui/onedrive_connect_page.dart';
-import 'ui/real_today_tab.dart';
-import 'ui/real_timeline_tab.dart';
+import 'ui/real_home_flow_page.dart';
 import 'ui/real_us_tab.dart';
 import 'ui/sync_conflict_page.dart';
 
@@ -34,7 +33,21 @@ part 'ui/entries/entry_pages.dart';
 part 'ui/attachments/attachment_widgets.dart';
 part 'ui/settings/onedrive_sync_settings_page.dart';
 
-const List<String> kDiaryMoods = ['开心', '安心', '温柔', '想念', '真诚', '治愈', '甜', '难过', '委屈', '生气', '焦虑', '孤独', '失落'];
+const List<String> kDiaryMoods = [
+  '开心',
+  '安心',
+  '温柔',
+  '想念',
+  '真诚',
+  '治愈',
+  '甜',
+  '难过',
+  '委屈',
+  '生气',
+  '焦虑',
+  '孤独',
+  '失落',
+];
 
 class LoveDailyApp extends StatelessWidget {
   const LoveDailyApp({super.key, this.storage});
@@ -156,6 +169,111 @@ class LoveDailyApp extends StatelessWidget {
   }
 }
 
+class StartupTransitionPage extends StatefulWidget {
+  const StartupTransitionPage({super.key});
+
+  @override
+  State<StartupTransitionPage> createState() => _StartupTransitionPageState();
+}
+
+class _StartupTransitionPageState extends State<StartupTransitionPage>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          const Positioned.fill(child: DiaryBackground()),
+          Center(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value,
+                  child: Transform.scale(
+                    scale: 0.96 + value * 0.04,
+                    child: child,
+                  ),
+                );
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, child) {
+                      final pulse = reduceMotion
+                          ? 0.0
+                          : math.sin(_controller.value * math.pi) * 0.035;
+                      return Transform.scale(scale: 1 + pulse, child: child);
+                    },
+                    child: Container(
+                      width: 86,
+                      height: 86,
+                      decoration: BoxDecoration(
+                        color: DiaryPalette.white.withValues(alpha: 0.84),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: DiaryPalette.white, width: 3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: DiaryPalette.rose.withValues(alpha: 0.18),
+                            blurRadius: 28,
+                            offset: const Offset(0, 14),
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.auto_stories_rounded,
+                        size: 42,
+                        color: DiaryPalette.rose,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    '恋爱日记',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: DiaryPalette.ink,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '把今天轻轻放好',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: DiaryPalette.wine,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class LoveDailyShell extends StatefulWidget {
   const LoveDailyShell({super.key, this.storage});
 
@@ -204,22 +322,24 @@ class _SyncStatusEntry {
 }
 
 class _LoveDailyShellState extends State<LoveDailyShell> {
-  static const Duration _syncExecutionTimeout = Duration(minutes: 12);
   static const Duration _foregroundUpdateInterval = Duration(milliseconds: 350);
+  static const double _immersiveTopBarReservedHeight = 72;
 
   late final DiaryStorage _storage = widget.storage ?? DiaryStorage();
   late final String _startupQuote = randomDailyQuote();
   final ValueNotifier<bool> _writeLockedListenable = ValueNotifier(false);
   final ValueNotifier<int> _syncStatusRevision = ValueNotifier(0);
-  final PageController _pageController = PageController();
+  final GlobalKey<RealHomeFlowPageState> _homeFlowKey =
+      GlobalKey<RealHomeFlowPageState>();
   List<DiaryEntry> _entries = const [];
   CoupleProfile _profile = DiaryStorage.seedProfile();
   bool _isLoaded = false;
   bool _isConnectingOneDrive = false;
   bool _isSyncingOneDrive = false;
+  bool _isCancellingOneDriveSync = false;
   bool _hasCheckedStartupOneDriveSync = false;
   bool _startupRestoreRequested = false;
-  int _currentIndex = 0;
+  bool _isTimelineBarVisible = false;
   DateTime? _lastSyncedAt;
   DateTime? _lastSyncFailedAt;
   String? _lastSyncFailureMessage;
@@ -228,6 +348,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   String? _oneDriveSyncLabel;
   final List<_SyncStatusEntry> _syncStatusHistory = [];
   DateTime? _lastForegroundUpdateAt;
+  String? _syncCancellationReason;
   bool _isActionMenuOpen = false;
   OneDriveSyncConfig? _oneDriveConfig;
   List<ScheduleItem> _schedules = const [];
@@ -235,11 +356,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   String? _startupLoadError;
 
   // 页面缓存
-  List<Widget>? _cachedPages;
-  List<DiaryEntry>? _cachedPageEntries;
-  CoupleProfile? _cachedPageProfile;
-  List<ScheduleItem>? _cachedPageSchedules;
-  double? _cachedTopStatusInset;
 
   @override
   void initState() {
@@ -251,7 +367,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   void dispose() {
     _writeLockedListenable.dispose();
     _syncStatusRevision.dispose();
-    _pageController.dispose();
     super.dispose();
   }
 
@@ -329,39 +444,30 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
 
   Future<void> _yieldToUi() => Future<void>.delayed(Duration.zero);
 
-  void _selectTab(int index, {bool animate = true}) {
-    if (_currentIndex != index) {
-      setState(() {
-        _currentIndex = index;
-      });
+  void _checkSyncCancelled() {
+    if (_isCancellingOneDriveSync) {
+      throw SyncCancelledException(
+        _syncCancellationReason ?? 'OneDrive 同步已取消。',
+      );
     }
+  }
 
-    void movePage() {
-      if (!_pageController.hasClients) {
-        return;
-      }
-      if (animate) {
-        unawaited(
-          _pageController.animateToPage(
-            index,
-            duration: const Duration(milliseconds: 340),
-            curve: Curves.easeOutCubic,
-          ),
-        );
-        return;
-      }
-      _pageController.jumpToPage(index);
-    }
-
-    if (_pageController.hasClients) {
-      movePage();
+  void _cancelOneDriveSync() {
+    if (!_isSyncingOneDrive || _isCancellingOneDriveSync || !mounted) {
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        movePage();
-      }
+    setState(() {
+      _isCancellingOneDriveSync = true;
+      _syncCancellationReason = 'OneDrive 同步已取消。';
+      _recordSyncStatus(_oneDriveSyncProgress ?? 0, '已请求取消：正在等待当前网络步骤安全结束');
     });
+    unawaited(
+      _updateForegroundSyncStatus(
+        label: '正在取消 OneDrive 同步…',
+        progress: _oneDriveSyncProgress,
+        force: true,
+      ),
+    );
   }
 
   void _closeActionMenu() {
@@ -742,7 +848,14 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       return savedEntry;
     }
 
-    _selectTab(1);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final homeFlow = _homeFlowKey.currentState;
+        if (homeFlow != null) {
+          unawaited(homeFlow.scrollToTimeline());
+        }
+      }
+    });
 
     if (!mounted) {
       return savedEntry;
@@ -935,10 +1048,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       minimumSyncIntervalMinutes:
           _oneDriveConfig?.minimumSyncIntervalMinutes ?? 0,
       maxDestructiveActions: _oneDriveConfig?.maxDestructiveActions ?? 3,
-      syncOriginals: _oneDriveConfig?.syncOriginals ?? true,
-      downloadOriginals: _oneDriveConfig?.downloadOriginals ?? true,
-      localOriginalRetentionDays:
-          _oneDriveConfig?.localOriginalRetentionDays ?? 30,
     );
     final formData = await _showOneDriveConfigPage(defaults);
     if (formData == null) {
@@ -955,9 +1064,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       syncOnWrite: formData.syncOnWrite,
       minimumSyncIntervalMinutes: formData.minimumSyncIntervalMinutes,
       maxDestructiveActions: formData.maxDestructiveActions,
-      syncOriginals: formData.syncOriginals,
-      downloadOriginals: formData.downloadOriginals,
-      localOriginalRetentionDays: formData.localOriginalRetentionDays,
     );
     final resetSyncBaseline =
         _oneDriveConfig!.remoteFolder != updated.remoteFolder;
@@ -990,6 +1096,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     const initialSyncLabel = '准备同步：连接 OneDrive';
     setState(() {
       _setOneDriveSyncing(true);
+      _isCancellingOneDriveSync = false;
+      _syncCancellationReason = null;
       _syncStartedAt = DateTime.now();
       _syncStatusHistory.clear();
       _recordSyncStatus(0, initialSyncLabel);
@@ -1010,10 +1118,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         safetyPolicy: SyncSafetyPolicy(
           maxDestructiveActions: _oneDriveConfig!.maxDestructiveActions,
         ),
-        attachmentPolicy: AttachmentSyncPolicy(
-          syncOriginals: _oneDriveConfig!.syncOriginals,
-          downloadOriginals: _oneDriveConfig!.downloadOriginals,
-        ),
+        attachmentPolicy: const AttachmentSyncPolicy(),
         onProgress: (progress, label) {
           unawaited(
             _updateForegroundSyncStatus(label: label, progress: progress),
@@ -1023,8 +1128,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           }
           _recordSyncStatus(progress, label);
         },
+        checkCancelled: _checkSyncCancelled,
       );
-      final result = await executor.sync().timeout(_syncExecutionTimeout);
+      final result = await executor.sync();
       await _loadAppData();
 
       if (!mounted) {
@@ -1041,10 +1147,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           conflictDetails: result.conflictDetails,
           remoteSource: remoteSource,
           provider: SyncProvider.oneDrive,
-          attachmentPolicy: AttachmentSyncPolicy(
-            syncOriginals: _oneDriveConfig!.syncOriginals,
-            downloadOriginals: _oneDriveConfig!.downloadOriginals,
-          ),
+          attachmentPolicy: const AttachmentSyncPolicy(),
           setSyncing: (value) {
             if (!mounted) {
               return;
@@ -1073,8 +1176,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         _showMessage(error.message);
       }
       return SyncRunOutcome.failed(error.message);
-    } on TimeoutException {
-      const message = 'OneDrive 同步超时，请检查网络后重试。';
+    } on SyncCancelledException catch (error) {
+      final message = error.message;
       await _recordSyncFailure(SyncProvider.oneDrive, message);
       if (mounted) {
         _showMessage(message);
@@ -1092,6 +1195,8 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       if (mounted) {
         setState(() {
           _setOneDriveSyncing(false);
+          _isCancellingOneDriveSync = false;
+          _syncCancellationReason = null;
           _oneDriveSyncProgress = null;
           _oneDriveSyncLabel = null;
           _syncStartedAt = null;
@@ -1157,7 +1262,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     }
 
     final config = _oneDriveConfig;
-    if (config == null || !config.syncOnWrite) {
+    if (config == null) {
       return;
     }
 
@@ -1256,11 +1361,10 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
     setState(() {
       _startupRestoreRequested = true;
     });
-    _selectTab(2, animate: false);
-
     if (_oneDriveConfig == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
+          _openUsSheet();
           _showMessage('已进入主页面。请手动连接 OneDrive，连接完成后会自动开始恢复。');
         }
       });
@@ -1307,10 +1411,7 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           _recordSyncStatus(mappedProgress, label);
         },
       );
-      final attachmentPolicy = AttachmentSyncPolicy(
-        syncOriginals: _oneDriveConfig!.syncOriginals,
-        downloadOriginals: _oneDriveConfig!.downloadOriginals,
-      );
+      const attachmentPolicy = AttachmentSyncPolicy();
       final filesToRestore = snapshot.files
           .where(
             (file) => attachmentPolicy.includeRemotePath(file.relativePath),
@@ -1334,8 +1435,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         if (mounted) {
           _recordSyncStatus(progress, label);
         }
-        final targetAbsolutePath = await _storage
-            .resolveSyncFileAbsolutePath(file.relativePath);
+        final targetAbsolutePath = await _storage.resolveSyncFileAbsolutePath(
+          file.relativePath,
+        );
         final targetFile = File(targetAbsolutePath);
         final parent = targetFile.parent;
         if (!await parent.exists()) {
@@ -1409,10 +1511,57 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
         builder: (_) => _OneDriveSyncSettingsPage(
           defaults: defaults,
           onDisconnect: _disconnectOneDrive,
-          onCleanLocalOriginals: (olderThan) =>
-              _storage.purgeLocalOriginals(olderThan: olderThan),
         ),
       ),
+    );
+  }
+
+  Future<void> _openUsSheet() async {
+    _closeActionMenu();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: DiaryPalette.ink.withValues(alpha: 0.24),
+      builder: (sheetContext) {
+        return FractionallySizedBox(
+          heightFactor: 0.88,
+          alignment: Alignment.bottomCenter,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(34)),
+            child: DecoratedBox(
+              decoration: const BoxDecoration(color: DiaryPalette.paper),
+              child: RealUsTab(
+                profile: _profile,
+                entries: _entries,
+                oneDriveConfig: _oneDriveConfig,
+                lastSyncedAt: _lastSyncedAt,
+                lastSyncFailedAt: _lastSyncFailedAt,
+                lastSyncFailureMessage: _lastSyncFailureMessage,
+                topContentInset: 0,
+                sheetMode: true,
+                onEditProfile: () {
+                  Navigator.of(sheetContext).pop();
+                  _openProfileEditor(firstSetup: false);
+                },
+                onOpenDustbin: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _openDustbin();
+                },
+                onConnectOneDrive: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _connectOneDrive();
+                },
+                onOpenOneDriveSettings: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _openOneDriveSettings();
+                },
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1513,11 +1662,57 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
                         Text(
                           elapsed == null
                               ? 'OneDrive 同步记录'
+                              : _isCancellingOneDriveSync
+                              ? '已运行 ${elapsed}s，正在取消，同步会在安全节点结束'
                               : '已运行 ${elapsed}s，当前只锁定写入操作',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: DiaryPalette.wine),
                         ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            DiaryBadge(
+                              label: _isCancellingOneDriveSync
+                                  ? '取消中'
+                                  : (_isSyncingOneDrive ? '同步中' : '空闲'),
+                              tone: _isCancellingOneDriveSync
+                                  ? DiaryBadgeTone.rose
+                                  : DiaryBadgeTone.ink,
+                            ),
+                            if (_oneDriveSyncProgress != null)
+                              DiaryBadge(
+                                label:
+                                    '${(_oneDriveSyncProgress!.clamp(0, 1) * 100).round()}%',
+                                tone: DiaryBadgeTone.rose,
+                              ),
+                            DiaryBadge(
+                              label: '步骤 ${history.length}',
+                              tone: DiaryBadgeTone.sand,
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 14),
+                        if (_isSyncingOneDrive) ...[
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: _isCancellingOneDriveSync
+                                  ? null
+                                  : _cancelOneDriveSync,
+                              icon: Icon(
+                                _isCancellingOneDriveSync
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.stop_circle_outlined,
+                              ),
+                              label: Text(
+                                _isCancellingOneDriveSync ? '正在取消…' : '取消同步',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxHeight: 360),
                           child: ListView.separated(
@@ -1655,26 +1850,62 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
                         DiaryBadge(label: percent, tone: DiaryBadgeTone.rose),
                       ],
                       const SizedBox(width: 8),
-                      const DiaryBadge(label: '只读中', tone: DiaryBadgeTone.ink),
+                      DiaryBadge(
+                        label: _isCancellingOneDriveSync ? '取消中' : '只读中',
+                        tone: _isCancellingOneDriveSync
+                            ? DiaryBadgeTone.rose
+                            : DiaryBadgeTone.ink,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 9),
                   LinearProgressIndicator(value: _oneDriveSyncProgress),
                   const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: DiaryPalette.wine,
-                        minimumSize: Size.zero,
-                        padding: EdgeInsets.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                  Row(
+                    children: [
+                      if (_syncStartedAt != null)
+                        Text(
+                          '已运行 ${DateTime.now().difference(_syncStartedAt!).inSeconds}s',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: DiaryPalette.wine),
+                        ),
+                      const Spacer(),
+                      if (_isSyncingOneDrive)
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: DiaryPalette.wine,
+                            minimumSize: Size.zero,
+                            padding: EdgeInsets.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            textStyle: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          onPressed: _isCancellingOneDriveSync
+                              ? null
+                              : _cancelOneDriveSync,
+                          icon: const Icon(
+                            Icons.stop_circle_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('取消'),
+                        ),
+                      const SizedBox(width: 10),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: DiaryPalette.wine,
+                          minimumSize: Size.zero,
+                          padding: EdgeInsets.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        onPressed: _showSyncStatusDetails,
+                        icon: const Icon(Icons.list_alt_rounded, size: 18),
+                        label: const Text('同步详情'),
                       ),
-                      onPressed: _showSyncStatusDetails,
-                      icon: const Icon(Icons.list_alt_rounded, size: 18),
-                      label: const Text('同步详情'),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -1682,19 +1913,6 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildFloatingTabBar() {
-    return Positioned(
-      left: 28,
-      right: 28,
-      bottom: MediaQuery.paddingOf(context).bottom + 16,
-      child: _FloatingTabBar(
-        currentIndex: _currentIndex,
-        pageController: _pageController,
-        onSelected: _selectTab,
-      ),
     );
   }
 
@@ -1708,37 +1926,73 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       required String label,
     }) {
       return _isActionMenuOpen
-          ? _GlassActionPill(icon: icon, label: label, onPressed: onPressed)
+          ? _GlassActionPill(
+              key: ValueKey<String>(label),
+              icon: icon,
+              label: label,
+              onPressed: onPressed,
+            )
           : const SizedBox.shrink();
+    }
+
+    Widget buildActionSwitcher(Widget child, Duration duration) {
+      return AnimatedSwitcher(
+        duration: duration,
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.18),
+                end: Offset.zero,
+              ).animate(animation),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.94, end: 1).animate(animation),
+                child: child,
+              ),
+            ),
+          );
+        },
+        child: child,
+      );
     }
 
     return Padding(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.paddingOf(context).bottom + 86,
+        bottom: MediaQuery.paddingOf(context).bottom + 8,
         right: 2,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: buildAction(
+          buildActionSwitcher(
+            buildAction(
+              onPressed: () {
+                _closeActionMenu();
+                unawaited(_openUsSheet());
+              },
+              icon: Icons.people_alt_rounded,
+              label: '我们设置',
+            ),
+            const Duration(milliseconds: 260),
+          ),
+          if (_isActionMenuOpen) const SizedBox(height: 10),
+          buildActionSwitcher(
+            buildAction(
               onPressed: isWriteLocked
                   ? _showWriteLockedMessage
                   : () => unawaited(_openScheduleEditor()),
               icon: Icons.event_note_rounded,
               label: '添加日程',
             ),
+            const Duration(milliseconds: 240),
           ),
           if (_isActionMenuOpen) const SizedBox(height: 10),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: buildAction(
+          buildActionSwitcher(
+            buildAction(
               onPressed: isSyncBusy
                   ? null
                   : hasOneDrive
@@ -1752,18 +2006,16 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
                     },
               icon: hasOneDrive ? Icons.sync_rounded : Icons.cloud_sync_rounded,
               label: _isSyncingOneDrive
-                  ? '同步中'
+                  ? '同步进行'
                   : hasOneDrive
-                  ? '同步'
-                  : '连接',
+                  ? '同步云端'
+                  : '连接云端',
             ),
+            const Duration(milliseconds: 220),
           ),
           if (_isActionMenuOpen) const SizedBox(height: 10),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: buildAction(
+          buildActionSwitcher(
+            buildAction(
               onPressed: isWriteLocked
                   ? _showWriteLockedMessage
                   : () {
@@ -1773,8 +2025,9 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
               icon: isWriteLocked
                   ? Icons.visibility_rounded
                   : Icons.edit_note_rounded,
-              label: isWriteLocked ? '只能查看' : '写日记',
+              label: isWriteLocked ? '只读查看' : '写篇日记',
             ),
+            const Duration(milliseconds: 220),
           ),
           AnimatedContainer(
             duration: const Duration(milliseconds: 200),
@@ -1797,67 +2050,18 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
   double get _topStatusInset {
     var inset = 0.0;
     if (_startupLoadError != null) {
+      inset += _immersiveTopBarReservedHeight;
+    }
+    if (_startupLoadError != null) {
       inset += 112;
     }
-    if (_isSyncingOneDrive) {
-      inset += 104;
-    }
     return inset;
-  }
-
-  List<Widget> _buildPages() {
-    final topInset = _topStatusInset;
-    if (_cachedPages != null &&
-        identical(_cachedPageEntries, _entries) &&
-        _cachedPageProfile == _profile &&
-        _cachedPageSchedules == _schedules &&
-        _cachedTopStatusInset == topInset) {
-      return _cachedPages!;
-    }
-    _cachedPageEntries = _entries;
-    _cachedPageProfile = _profile;
-    _cachedPageSchedules = _schedules;
-    _cachedTopStatusInset = topInset;
-    _cachedPages = [
-      RealTodayTab(
-        profile: _profile,
-        entries: _entries,
-        schedules: _schedules,
-        startupQuote: _startupQuote,
-        topContentInset: _topStatusInset,
-        onOpenSchedules: (date) => _openScheduleManager(initialDate: date),
-      ),
-      RealTimelineTab(
-        entries: _entries,
-        rootDirectoryPath: _storageRootPath,
-        isWriteLocked: _isWriteLocked,
-        topContentInset: _topStatusInset,
-        onWriteBlocked: _showWriteLockedMessage,
-        onOpenEntry: _openEntryDetail,
-        onEditEntry: _editEntry,
-        onDeleteEntry: _deleteEntry,
-      ),
-      RealUsTab(
-        profile: _profile,
-        entries: _entries,
-        oneDriveConfig: _oneDriveConfig,
-        lastSyncedAt: _lastSyncedAt,
-        lastSyncFailedAt: _lastSyncFailedAt,
-        lastSyncFailureMessage: _lastSyncFailureMessage,
-        topContentInset: _topStatusInset,
-        onEditProfile: () => _openProfileEditor(firstSetup: false),
-        onOpenDustbin: _openDustbin,
-        onConnectOneDrive: _connectOneDrive,
-        onOpenOneDriveSettings: _openOneDriveSettings,
-      ),
-    ];
-    return _cachedPages!;
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_isLoaded) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const StartupTransitionPage();
     }
 
     if (!_profile.isOnboarded && !_startupRestoreRequested) {
@@ -1879,38 +2083,61 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
       );
     }
 
-    final pages = _buildPages();
-
     final topInset = MediaQuery.paddingOf(context).top;
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final homeFlow = RealHomeFlowPage(
+      key: _homeFlowKey,
+      profile: _profile,
+      entries: _entries,
+      schedules: _schedules,
+      startupQuote: _startupQuote,
+      rootDirectoryPath: _storageRootPath,
+      isWriteLocked: _isWriteLocked,
+      topContentInset: _topStatusInset,
+      onWriteBlocked: _showWriteLockedMessage,
+      onOpenSchedules: (date) => _openScheduleManager(initialDate: date),
+      onOpenEntry: _openEntryDetail,
+      onEditEntry: _editEntry,
+      onDeleteEntry: _deleteEntry,
+      syncStatusRevision: _syncStatusRevision,
+      isSyncingOneDrive: _isSyncingOneDrive,
+      isCancellingOneDriveSync: _isCancellingOneDriveSync,
+      oneDriveSyncProgress: _oneDriveSyncProgress,
+      oneDriveSyncLabel: _oneDriveSyncLabel,
+      onShowSyncDetails: _showSyncStatusDetails,
+      onTimelineBarVisibilityChanged: (visible) {
+        if (_isTimelineBarVisible == visible || !mounted) {
+          return;
+        }
+        setState(() {
+          _isTimelineBarVisible = visible;
+        });
+      },
+    );
+
     return Scaffold(
       extendBody: true,
       body: Stack(
         children: [
           const Positioned.fill(child: DiaryBackground()),
           Positioned.fill(
-            child: NotificationListener<ScrollStartNotification>(
-              onNotification: (_) {
-                return false;
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value,
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - value) * 18),
+                    child: child,
+                  ),
+                );
               },
-              child: PageView(
-                controller: _pageController,
-                clipBehavior: Clip.hardEdge,
-                physics: const _DeliberatePageScrollPhysics(
-                  parent: BouncingScrollPhysics(),
-                ),
-                allowImplicitScrolling: true,
-                onPageChanged: (index) {
-                  if (_currentIndex == index) {
-                    return;
-                  }
-                  setState(() {
-                    _currentIndex = index;
-                  });
-                },
-                children: [
-                  for (final page in pages) _KeepAlivePage(child: page),
-                ],
-              ),
+              child: homeFlow,
             ),
           ),
           if (_isActionMenuOpen)
@@ -1923,19 +2150,24 @@ class _LoveDailyShellState extends State<LoveDailyShell> {
           Positioned(
             left: 0,
             right: 0,
-            top: topInset + 10,
+            top:
+                topInset +
+                (_startupLoadError == null
+                    ? 10
+                    : _immersiveTopBarReservedHeight),
             child: IgnorePointer(
-              ignoring: !_isSyncingOneDrive && _startupLoadError == null,
+              ignoring:
+                  (!_isSyncingOneDrive || _isTimelineBarVisible) &&
+                  _startupLoadError == null,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _buildStartupErrorBanner(),
-                  _buildSyncStatusBanner(),
+                  if (!_isTimelineBarVisible) _buildSyncStatusBanner(),
                 ],
               ),
             ),
           ),
-          _buildFloatingTabBar(),
         ],
       ),
       floatingActionButton: _buildFloatingActionButton(),

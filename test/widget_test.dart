@@ -7,7 +7,6 @@ import 'package:love_diary/data/diary_storage.dart';
 import 'package:love_diary/models/diary_models.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
-import 'package:love_diary/ui/real_timeline_tab.dart';
 
 class FakeDiaryStorage extends DiaryStorage {
   FakeDiaryStorage({
@@ -144,12 +143,36 @@ void main() {
   Future<void> pumpApp(WidgetTester tester, DiaryStorage storage) async {
     await tester.pumpWidget(LoveDailyApp(storage: storage));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 900));
+  }
+
+  Future<void> pumpTransition(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
   }
 
   Future<void> openActionMenu(WidgetTester tester) async {
     await tester.tap(find.byIcon(Icons.add_rounded).last);
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
+  }
+
+  Future<void> scrollToTimeline(WidgetTester tester) async {
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -760),
+    );
+    await pumpTransition(tester);
+  }
+
+  Future<void> openEntryFromTimeline(WidgetTester tester, String title) async {
+    await scrollToTimeline(tester);
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, 160),
+    );
+    await pumpTransition(tester);
+    await tester.tap(find.text(title));
+    await pumpTransition(tester);
   }
 
   testWidgets('tapping an attachment opens the preview page', (
@@ -180,7 +203,7 @@ void main() {
     expect(find.text('preview.jpg'), findsOneWidget);
   });
 
-  testWidgets('已引导状态会显示首页导航', (WidgetTester tester) async {
+  testWidgets('已引导状态会显示单页首页和操作菜单', (WidgetTester tester) async {
     final storage = FakeDiaryStorage(
       profile: CoupleProfile(
         maleName: '我',
@@ -193,12 +216,14 @@ void main() {
 
     await pumpApp(tester, storage);
 
-    expect(find.text('今天'), findsOneWidget);
-    expect(find.text('回忆'), findsOneWidget);
-    expect(find.text('我们'), findsOneWidget);
+    expect(find.text('首页'), findsOneWidget);
+    expect(find.text('时间轴'), findsWidgets);
+    expect(find.byType(CustomScrollView), findsOneWidget);
     await openActionMenu(tester);
-    expect(find.text('写日记'), findsOneWidget);
+    expect(find.text('我们设置'), findsOneWidget);
     expect(find.text('添加日程'), findsOneWidget);
+    expect(find.text('连接云端'), findsOneWidget);
+    expect(find.text('写篇日记'), findsOneWidget);
   });
 
   testWidgets('点击写日记会打开创建页', (WidgetTester tester) async {
@@ -215,9 +240,8 @@ void main() {
     await pumpApp(tester, storage);
 
     await openActionMenu(tester);
-    await tester.tap(find.text('写日记'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('写篇日记'));
+    await pumpTransition(tester);
 
     expect(find.text('新建日记'), findsWidgets);
     expect(find.text('标题（可选）'), findsOneWidget);
@@ -239,12 +263,13 @@ void main() {
     await pumpApp(tester, storage);
     await openActionMenu(tester);
 
+    expect(find.text('我们设置'), findsOneWidget);
     expect(find.text('添加日程'), findsOneWidget);
-    expect(find.text('连接'), findsOneWidget);
-    expect(find.text('写日记'), findsOneWidget);
+    expect(find.text('连接云端'), findsOneWidget);
+    expect(find.text('写篇日记'), findsOneWidget);
 
     await tester.tapAt(const Offset(24, 220));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('添加日程'), findsNothing);
   });
@@ -263,7 +288,7 @@ void main() {
     await pumpApp(tester, storage);
     await openActionMenu(tester);
     await tester.tap(find.text('添加日程'));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('添加日程'), findsWidgets);
     expect(find.text('标题'), findsOneWidget);
@@ -295,10 +320,13 @@ void main() {
 
     expect(find.text('生日·今天'), findsOneWidget);
 
-    await tester.drag(find.byType(ListView).first, const Offset(0, -180));
-    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -180),
+    );
+    await pumpTransition(tester);
     await tester.tap(find.text('${today.day}').first);
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('日程表'), findsOneWidget);
     expect(find.text('生日'), findsWidgets);
@@ -317,12 +345,7 @@ void main() {
 
     await pumpApp(tester, storage);
 
-    await tester.tap(find.text('回忆'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('深夜面馆'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await openEntryFromTimeline(tester, '深夜面馆');
 
     expect(find.text('日记详情'), findsWidgets);
     expect(find.text('评论区'), findsOneWidget);
@@ -341,16 +364,13 @@ void main() {
 
     await pumpApp(tester, storage);
 
-    await tester.tap(find.text('回忆'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('深夜面馆'));
-    await tester.pumpAndSettle();
+    await openEntryFromTimeline(tester, '深夜面馆');
     await tester.tap(find.byTooltip('编辑日记'));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     await tester.enterText(find.byType(TextFormField).at(0), '深夜面馆更新版');
     await tester.tap(find.text('保存'));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('深夜面馆更新版'), findsWidgets);
   });
@@ -368,14 +388,11 @@ void main() {
 
     await pumpApp(tester, storage);
 
-    await tester.tap(find.text('回忆'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('深夜面馆'));
-    await tester.pumpAndSettle();
+    await openEntryFromTimeline(tester, '深夜面馆');
     await tester.tap(find.byTooltip('删除日记'));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
     await tester.tap(find.text('删除'));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('日记详情'), findsNothing);
     expect(find.text('深夜面馆'), findsNothing);
@@ -395,11 +412,11 @@ void main() {
     await pumpApp(tester, storage);
 
     await openActionMenu(tester);
-    await tester.tap(find.text('写日记'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('写篇日记'));
+    await pumpTransition(tester);
     await tester.enterText(find.byType(TextFormField).at(1), '这是还没保存的内容');
     await tester.tap(find.byIcon(Icons.arrow_back_rounded));
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
     expect(find.text('离开前要怎么处理？'), findsOneWidget);
     expect(find.text('存为草稿'), findsOneWidget);
@@ -418,18 +435,13 @@ void main() {
 
     await pumpApp(tester, storage);
 
-    await tester.tap(find.text('回忆'));
-    await tester.pumpAndSettle();
+    await scrollToTimeline(tester);
+    await tester.tap(find.byTooltip('搜索日记'));
+    await pumpTransition(tester);
     await tester.enterText(find.byType(TextField).first, '煎饼');
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
 
-    expect(
-      find.descendant(
-        of: find.byType(RealTimelineTab),
-        matching: find.text('周末煎饼计划'),
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('周末煎饼计划'), findsOneWidget);
   });
 
   testWidgets('首次启动会显示资料引导', (WidgetTester tester) async {
@@ -457,7 +469,7 @@ void main() {
     await pumpApp(tester, storage);
     await openActionMenu(tester);
     await tester.tap(find.byIcon(Icons.edit_note_rounded).last);
-    await tester.pumpAndSettle();
+    await pumpTransition(tester);
     await tester.enterText(
       find.byType(TextFormField).at(1),
       'autosaved draft body',

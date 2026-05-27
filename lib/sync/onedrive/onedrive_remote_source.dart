@@ -16,16 +16,18 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   static const _uploadChunkSize = 320 * 1024 * 20;
   static const _maxRequestAttempts = 4;
   static const _requestTimeout = Duration(seconds: 45);
+  static const _downloadUrlField = '@microsoft.graph.downloadUrl';
   static const _deltaSelectFields =
-      'id,name,parentReference,eTag,size,lastModifiedDateTime,file,folder,deleted';
+      'id,name,parentReference,eTag,size,lastModifiedDateTime,file,folder,deleted,$_downloadUrlField';
   static const _childrenSelectFields =
-      'id,name,parentReference,eTag,size,lastModifiedDateTime,file,folder';
+      'id,name,parentReference,eTag,size,lastModifiedDateTime,file,folder,$_downloadUrlField';
 
   final OneDriveAuthService authService;
   final HttpClient _httpClient = HttpClient()
     ..connectionTimeout = _requestTimeout
     ..idleTimeout = const Duration(seconds: 30);
   final Set<String> _knownRemoteFolderPaths = <String>{};
+  final Map<String, String> _downloadUrlsByPath = <String, String>{};
 
   OneDriveSyncConfig? _cachedConfig;
   String? _cachedAccessToken;
@@ -57,7 +59,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   Future<RemoteSyncSnapshot> fetchSnapshot({
     SyncState? baseline,
     SyncProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
     onProgress?.call(0, 'OneDrive：检查配置和授权');
     final config = await _requireConfig();
     final accessToken = await _getAccessToken();
@@ -69,6 +73,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
           accessToken: accessToken,
           baseline: baseline!,
           onProgress: onProgress,
+          checkCancelled: checkCancelled,
         );
         _rememberRemoteFolders(config.remoteFolder, snapshot.remoteNodes);
         onProgress?.call(
@@ -87,6 +92,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       config: config,
       baseline: baseline,
       onProgress: onProgress,
+      checkCancelled: checkCancelled,
     );
     _rememberRemoteFolders(config.remoteFolder, snapshot.remoteNodes);
     onProgress?.call(1, 'OneDrive：全量扫描完成，发现 ${snapshot.files.length} 个远端文件');
@@ -98,7 +104,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required String relativePath,
     required String absolutePath,
     required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
     final config = await _requireConfig();
     final accessToken = await _getAccessToken();
     final localFile = File(absolutePath);
@@ -159,6 +167,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     try {
       var start = 0;
       while (start < stat.size) {
+        checkCancelled?.call();
         final endExclusive = (start + _uploadChunkSize > stat.size)
             ? stat.size
             : start + _uploadChunkSize;
@@ -195,7 +204,42 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required String relativePath,
     required String targetAbsolutePath,
     required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
+    final targetFile = File(targetAbsolutePath);
+    final cachedDownloadUrl = _downloadUrlsByPath[relativePath];
+    if (cachedDownloadUrl != null && cachedDownloadUrl.isNotEmpty) {
+      try {
+        await _downloadAbsoluteFile(
+          uri: Uri.parse(cachedDownloadUrl),
+          targetFile: targetFile,
+          relativePath: relativePath,
+          checkCancelled: checkCancelled,
+        );
+        return;
+      } on OneDriveAuthException {
+        _downloadUrlsByPath.remove(relativePath);
+      }
+    }
+
+    final downloadUrl = await _fetchDownloadUrl(
+      relativePath: relativePath,
+      checkCancelled: checkCancelled,
+    );
+    await _downloadAbsoluteFile(
+      uri: Uri.parse(downloadUrl),
+      targetFile: targetFile,
+      relativePath: relativePath,
+      checkCancelled: checkCancelled,
+    );
+  }
+
+  Future<String> _fetchDownloadUrl({
+    required String relativePath,
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
     final config = await _requireConfig();
     final accessToken = await _getAccessToken();
     final metadataResponse = await _sendRequest(
@@ -212,24 +256,23 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       );
     }
 
-    final downloadUrl =
-        metadataPayload['@microsoft.graph.downloadUrl'] as String?;
+    final downloadUrl = metadataPayload[_downloadUrlField] as String?;
     if (downloadUrl == null || downloadUrl.isEmpty) {
       throw OneDriveAuthException(
         'OneDrive did not return a download url for $relativePath.',
       );
     }
 
-    final targetFile = File(targetAbsolutePath);
-    await _downloadAbsoluteFile(
-      uri: Uri.parse(downloadUrl),
-      targetFile: targetFile,
-      relativePath: relativePath,
-    );
+    _downloadUrlsByPath[relativePath] = downloadUrl;
+    return downloadUrl;
   }
 
   @override
-  Future<void> deleteFile(String relativePath) async {
+  Future<void> deleteFile(
+    String relativePath, {
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
     final config = await _requireConfig();
     final accessToken = await _getAccessToken();
     final response = await _sendRequest(
@@ -254,7 +297,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required OneDriveSyncConfig config,
     required SyncState? baseline,
     SyncProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
     onProgress?.call(0.24, 'OneDrive：定位远端目录“${config.remoteFolder}”');
     final rootFolder = await _tryGetRemoteFolder(
       accessToken: accessToken,
@@ -282,7 +327,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       pathPrefix: '',
       nodes: nodes,
       sink: files,
+      checkCancelled: checkCancelled,
       onItemScanned: (path, isFolder) {
+        checkCancelled?.call();
         if (isFolder) {
           scannedFolders++;
         } else {
@@ -307,7 +354,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     onProgress?.call(0.84, 'OneDrive：生成下次增量同步游标');
     final cursor = await _tryFetchDeltaCursor(
       accessToken: accessToken,
-      rootItemId: rootId,
+      remoteFolder: config.remoteFolder,
     );
     files.sort((a, b) => a.relativePath.compareTo(b.relativePath));
     return RemoteSyncSnapshot(
@@ -322,7 +369,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required String accessToken,
     required SyncState baseline,
     SyncProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
   }) async {
+    checkCancelled?.call();
     if (!baseline.canUseDelta) {
       throw const OneDriveAuthException(
         'OneDrive delta baseline is incomplete.',
@@ -345,6 +394,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     var pageCount = 0;
     var changeCount = 0;
     while (nextUrl.isNotEmpty) {
+      checkCancelled?.call();
       final response = await _sendRequest(
         method: 'GET',
         uri: Uri.parse(nextUrl),
@@ -369,8 +419,14 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         progress,
         'OneDrive：处理增量第 $pageCount 页，$changeCount 项变更',
       );
-      await _applyDeltaItems(nodes: nodes, rootId: rootId, items: pending);
+      await _applyDeltaItems(
+        nodes: nodes,
+        rootId: rootId,
+        items: pending,
+        checkCancelled: checkCancelled,
+      );
       await _yieldToEventLoop();
+      checkCancelled?.call();
 
       nextUrl = payload['@odata.nextLink'] as String? ?? '';
       deltaLink = payload['@odata.deltaLink'] as String? ?? deltaLink;
@@ -396,12 +452,15 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required Map<String, OneDriveRemoteNode> nodes,
     required String rootId,
     required List<Map<String, dynamic>> items,
+    SyncCancellationCheck? checkCancelled,
   }) async {
     final pending = [...items];
     while (pending.isNotEmpty) {
+      checkCancelled?.call();
       var progressed = false;
       var processed = 0;
       for (var index = pending.length - 1; index >= 0; index--) {
+        checkCancelled?.call();
         final item = pending[index];
         try {
           _applyDeltaItem(nodes: nodes, rootId: rootId, item: item);
@@ -410,6 +469,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
           processed++;
           if (processed % 100 == 0) {
             await _yieldToEventLoop();
+            checkCancelled?.call();
           }
         } on _DeferredDeltaItemException {
           continue;
@@ -495,12 +555,14 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required String pathPrefix,
     required Map<String, OneDriveRemoteNode> nodes,
     required List<RemoteSyncFile> sink,
+    required SyncCancellationCheck? checkCancelled,
     required void Function(String path, bool isFolder) onItemScanned,
   }) async {
     String? nextUrl =
         '$_graphBaseUrl/me/drive/items/$folderId/children?\$select=$_childrenSelectFields';
 
     while (nextUrl != null) {
+      checkCancelled?.call();
       final response = await _sendRequest(
         method: 'GET',
         uri: Uri.parse(nextUrl),
@@ -516,6 +578,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
 
       final items = payload['value'] as List? ?? const [];
       for (var index = 0; index < items.length; index++) {
+        checkCancelled?.call();
         final rawItem = items[index];
         final item = Map<String, dynamic>.from(rawItem as Map);
         final itemId = item['id'] as String? ?? '';
@@ -540,6 +603,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
             pathPrefix: relativePath,
             nodes: nodes,
             sink: sink,
+            checkCancelled: checkCancelled,
             onItemScanned: onItemScanned,
           );
           continue;
@@ -571,10 +635,10 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
 
   Future<String?> _tryFetchDeltaCursor({
     required String accessToken,
-    required String rootItemId,
+    required String remoteFolder,
   }) async {
     try {
-      var nextUrl = _deltaStartUri(rootItemId).toString();
+      var nextUrl = _deltaStartUri(remoteFolder).toString();
       String? deltaLink;
       while (nextUrl.isNotEmpty) {
         final response = await _sendRequest(
@@ -756,9 +820,15 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     );
   }
 
-  Uri _deltaStartUri(String rootItemId) {
+  Uri _deltaStartUri(String remoteFolder) {
+    // Keep delta calls inside the AppFolder namespace so the
+    // Files.ReadWrite.AppFolder scope can issue and reuse cursors.
+    final encodedPath = _encodePath(remoteFolder);
+    final deltaPath = encodedPath.isEmpty
+        ? 'special/approot/delta'
+        : 'special/approot:/$encodedPath:/delta';
     return Uri.parse(
-      '$_graphBaseUrl/me/drive/items/$rootItemId/delta?\$select=$_deltaSelectFields',
+      '$_graphBaseUrl/me/drive/$deltaPath?\$select=$_deltaSelectFields',
     );
   }
 
@@ -873,10 +943,12 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     required Uri uri,
     required File targetFile,
     required String relativePath,
+    SyncCancellationCheck? checkCancelled,
   }) async {
     Object? lastError;
 
     for (var attempt = 1; attempt <= _maxRequestAttempts; attempt++) {
+      checkCancelled?.call();
       final temporaryFile = File('${targetFile.path}.tmp');
       IOSink? sink;
       try {
@@ -898,6 +970,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         await temporaryFile.parent.create(recursive: true);
         sink = temporaryFile.openWrite();
         await for (final data in response.timeout(_requestTimeout)) {
+          checkCancelled?.call();
           sink.add(data);
         }
         await sink.flush();
@@ -982,6 +1055,12 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         (hashes['sha1Hash'] as String?) ??
         (hashes['quickXorHash'] as String?) ??
         '${item['size']}:${modifiedAt.millisecondsSinceEpoch}';
+    final downloadUrl = item[_downloadUrlField] as String?;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      _downloadUrlsByPath.remove(relativePath);
+    } else {
+      _downloadUrlsByPath[relativePath] = downloadUrl;
+    }
 
     return RemoteSyncFile(
       relativePath: relativePath,

@@ -138,39 +138,45 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
     final header = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DiaryHero(
-          eyebrow: '回忆',
-          title: '时光轴',
-          footer: Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              DiaryBadge(label: '${widget.entries.length} 篇'),
-              if (_selectedMood != null)
-                DiaryBadge(label: _selectedMood!, tone: DiaryBadgeTone.sand),
-              if (_selectedDate != null)
-                DiaryBadge(
-                  label: formatDiaryDate(_selectedDate!),
-                  tone: DiaryBadgeTone.ink,
-                ),
-            ],
+        DiaryReveal(
+          child: DiaryHero(
+            eyebrow: '回忆',
+            title: '时光轴',
+            footer: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                DiaryBadge(label: '${widget.entries.length} 篇'),
+                if (_selectedMood != null)
+                  DiaryBadge(label: _selectedMood!, tone: DiaryBadgeTone.sand),
+                if (_selectedDate != null)
+                  DiaryBadge(
+                    label: formatDiaryDate(_selectedDate!),
+                    tone: DiaryBadgeTone.ink,
+                  ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 22),
-        _TimelineFilterPanel(
-          controller: _searchController,
-          moods: moods,
-          selectedMood: _selectedMood,
-          selectedDate: _selectedDate,
-          hasFilter: hasFilter,
-          onQueryChanged: _onSearchChanged,
-          onMoodSelected: (mood) {
-            setState(() {
-              _selectedMood = mood;
-            });
-          },
-          onPickDate: _pickDate,
-          onClear: _clearFilters,
+        DiaryReveal(
+          delay: const Duration(milliseconds: 100),
+          offset: const Offset(0, 0.06),
+          child: _TimelineFilterPanel(
+            controller: _searchController,
+            moods: moods,
+            selectedMood: _selectedMood,
+            selectedDate: _selectedDate,
+            hasFilter: hasFilter,
+            onQueryChanged: _onSearchChanged,
+            onMoodSelected: (mood) {
+              setState(() {
+                _selectedMood = mood;
+              });
+            },
+            onPickDate: _pickDate,
+            onClear: _clearFilters,
+          ),
         ),
         const SizedBox(height: 24),
         DiarySectionHeader(title: hasFilter ? '筛选结果' : '日记目录'),
@@ -204,23 +210,471 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
 
         final entryIndex = index - 1;
         final entry = filteredEntries[entryIndex];
-        return _TimelineEntryRow(
-          entry: entry,
-          rootDirectoryPath: widget.rootDirectoryPath,
-          isFirst: entryIndex == 0,
-          isLast: entryIndex == filteredEntries.length - 1,
-          onTap: () => widget.onOpenEntry(entry),
-          onEdit: () {
-            if (widget.isWriteLocked) {
-              widget.onWriteBlocked();
-              return;
-            }
-            widget.onEditEntry(entry);
-          },
-          onDelete: () => _confirmDelete(entry),
+        return DiaryReveal(
+          delay: Duration(milliseconds: 90 + (entryIndex.clamp(0, 5) * 45)),
+          offset: const Offset(0, 0.08),
+          child: _TimelineEntryRow(
+            entry: entry,
+            rootDirectoryPath: widget.rootDirectoryPath,
+            isFirst: entryIndex == 0,
+            isLast: entryIndex == filteredEntries.length - 1,
+            onTap: () => widget.onOpenEntry(entry),
+            onEdit: () {
+              if (widget.isWriteLocked) {
+                widget.onWriteBlocked();
+                return;
+              }
+              widget.onEditEntry(entry);
+            },
+            onDelete: () => _confirmDelete(entry),
+          ),
         );
       },
     );
+  }
+}
+
+class TimelineSection extends StatelessWidget {
+  const TimelineSection({
+    super.key,
+    required this.entries,
+    required this.rootDirectoryPath,
+    required this.isWriteLocked,
+    required this.onWriteBlocked,
+    required this.onOpenEntry,
+    required this.onEditEntry,
+    required this.onDeleteEntry,
+  });
+
+  final List<DiaryEntry> entries;
+  final String? rootDirectoryPath;
+  final bool isWriteLocked;
+  final VoidCallback onWriteBlocked;
+  final ValueChanged<DiaryEntry> onOpenEntry;
+  final Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry;
+  final Future<void> Function(DiaryEntry entry) onDeleteEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          DiarySectionHeader(title: '时间轴'),
+          SizedBox(height: 14),
+          DiaryEmptyState(title: '还没有日记'),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DiarySectionHeader(title: '时间轴'),
+        const SizedBox(height: 14),
+        for (var index = 0; index < entries.length; index++)
+          DiaryReveal(
+            delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
+            offset: const Offset(0, 0.06),
+            child: _TimelineEntryRow(
+              entry: entries[index],
+              rootDirectoryPath: rootDirectoryPath,
+              isFirst: index == 0,
+              isLast: index == entries.length - 1,
+              onTap: () => onOpenEntry(entries[index]),
+              onEdit: () {
+                if (isWriteLocked) {
+                  onWriteBlocked();
+                  return;
+                }
+                onEditEntry(entries[index]);
+              },
+              onDelete: () => _confirmTimelineDelete(
+                context: context,
+                entry: entries[index],
+                isWriteLocked: isWriteLocked,
+                onWriteBlocked: onWriteBlocked,
+                onDeleteEntry: onDeleteEntry,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class TimelineSliverSection extends StatelessWidget {
+  const TimelineSliverSection({
+    super.key,
+    required this.entries,
+    required this.rootDirectoryPath,
+    required this.isWriteLocked,
+    required this.onWriteBlocked,
+    required this.onOpenEntry,
+    required this.onEditEntry,
+    required this.onDeleteEntry,
+    this.headerKey,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final List<DiaryEntry> entries;
+  final String? rootDirectoryPath;
+  final bool isWriteLocked;
+  final VoidCallback onWriteBlocked;
+  final ValueChanged<DiaryEntry> onOpenEntry;
+  final Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry;
+  final Future<void> Function(DiaryEntry entry) onDeleteEntry;
+  final Key? headerKey;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return SliverPadding(
+        padding: padding,
+        sliver: SliverToBoxAdapter(
+          child: KeyedSubtree(
+            key: headerKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                DiarySectionHeader(title: '时间轴'),
+                SizedBox(height: 14),
+                DiaryEmptyState(title: '还没有日记'),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverPadding(
+          padding: padding,
+          sliver: SliverToBoxAdapter(
+            child: KeyedSubtree(
+              key: headerKey,
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DiarySectionHeader(title: '时间轴'),
+                  SizedBox(height: 14),
+                ],
+              ),
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: padding,
+          sliver: SliverList.builder(
+            itemCount: entries.length,
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              return DiaryReveal(
+                delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
+                offset: const Offset(0, 0.06),
+                child: _TimelineEntryRow(
+                  entry: entry,
+                  rootDirectoryPath: rootDirectoryPath,
+                  isFirst: index == 0,
+                  isLast: index == entries.length - 1,
+                  onTap: () => onOpenEntry(entry),
+                  onEdit: () {
+                    if (isWriteLocked) {
+                      onWriteBlocked();
+                      return;
+                    }
+                    onEditEntry(entry);
+                  },
+                  onDelete: () => _confirmTimelineDelete(
+                    context: context,
+                    entry: entry,
+                    isWriteLocked: isWriteLocked,
+                    onWriteBlocked: onWriteBlocked,
+                    onDeleteEntry: onDeleteEntry,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Future<void> showTimelineSearchPage({
+  required BuildContext context,
+  required List<DiaryEntry> entries,
+  required String? rootDirectoryPath,
+  required bool isWriteLocked,
+  required VoidCallback onWriteBlocked,
+  required ValueChanged<DiaryEntry> onOpenEntry,
+  required Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry,
+  required Future<void> Function(DiaryEntry entry) onDeleteEntry,
+}) {
+  return Navigator.of(context).push<void>(
+    PageRouteBuilder<void>(
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          TimelineSearchPage(
+            entries: entries,
+            rootDirectoryPath: rootDirectoryPath,
+            isWriteLocked: isWriteLocked,
+            onWriteBlocked: onWriteBlocked,
+            onOpenEntry: onOpenEntry,
+            onEditEntry: onEditEntry,
+            onDeleteEntry: onDeleteEntry,
+          ),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        final reducedMotion =
+            MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+        if (reducedMotion) {
+          return FadeTransition(opacity: animation, child: child);
+        }
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.04),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      transitionDuration: const Duration(milliseconds: 320),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
+    ),
+  );
+}
+
+class TimelineSearchPage extends StatefulWidget {
+  const TimelineSearchPage({
+    super.key,
+    required this.entries,
+    required this.rootDirectoryPath,
+    required this.isWriteLocked,
+    required this.onWriteBlocked,
+    required this.onOpenEntry,
+    required this.onEditEntry,
+    required this.onDeleteEntry,
+  });
+
+  final List<DiaryEntry> entries;
+  final String? rootDirectoryPath;
+  final bool isWriteLocked;
+  final VoidCallback onWriteBlocked;
+  final ValueChanged<DiaryEntry> onOpenEntry;
+  final Future<DiaryEntry?> Function(DiaryEntry entry) onEditEntry;
+  final Future<void> Function(DiaryEntry entry) onDeleteEntry;
+
+  @override
+  State<TimelineSearchPage> createState() => _TimelineSearchPageState();
+}
+
+class _TimelineSearchPageState extends State<TimelineSearchPage> {
+  final TextEditingController _searchController = TextEditingController();
+  String? _selectedMood;
+  DateTime? _selectedDate;
+  Timer? _searchDebounce;
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      helpText: '选择日期',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _selectedDate = picked;
+    });
+  }
+
+  void _clearFilters() {
+    _searchController.clear();
+    setState(() {
+      _selectedMood = null;
+      _selectedDate = null;
+    });
+  }
+
+  List<DiaryEntry> get _filteredEntries {
+    final query = _searchController.text.trim().toLowerCase();
+    return widget.entries.where((entry) {
+      final matchesQuery =
+          query.isEmpty ||
+          entry.title.toLowerCase().contains(query) ||
+          entry.content.toLowerCase().contains(query);
+      final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
+      final matchesDate =
+          _selectedDate == null ||
+          isSameDiaryDay(entry.createdAt, _selectedDate!);
+      return matchesQuery && matchesMood && matchesDate;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final moods = widget.entries.map((entry) => entry.mood).toSet().toList()
+      ..sort();
+    final filteredEntries = _filteredEntries;
+    final hasFilter =
+        _searchController.text.trim().isNotEmpty ||
+        _selectedMood != null ||
+        _selectedDate != null;
+    final topPadding = MediaQuery.paddingOf(context).top;
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: DiaryBackground()),
+          CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(18, topPadding + 18, 18, 0),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: '返回',
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '搜索日记',
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    color: DiaryPalette.ink,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      _TimelineFilterPanel(
+                        controller: _searchController,
+                        moods: moods,
+                        selectedMood: _selectedMood,
+                        selectedDate: _selectedDate,
+                        hasFilter: hasFilter,
+                        onQueryChanged: _onSearchChanged,
+                        onMoodSelected: (mood) {
+                          setState(() {
+                            _selectedMood = mood;
+                          });
+                        },
+                        onPickDate: _pickDate,
+                        onClear: _clearFilters,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (widget.entries.isEmpty)
+                const SliverPadding(
+                  padding: EdgeInsets.fromLTRB(18, 22, 18, 36),
+                  sliver: SliverToBoxAdapter(
+                    child: DiaryEmptyState(title: '还没有日记'),
+                  ),
+                )
+              else if (filteredEntries.isEmpty)
+                const SliverPadding(
+                  padding: EdgeInsets.fromLTRB(18, 22, 18, 36),
+                  sliver: SliverToBoxAdapter(
+                    child: DiaryEmptyState(title: '没有匹配结果'),
+                  ),
+                )
+              else
+                TimelineSliverSection(
+                  entries: filteredEntries,
+                  rootDirectoryPath: widget.rootDirectoryPath,
+                  isWriteLocked: widget.isWriteLocked,
+                  onWriteBlocked: widget.onWriteBlocked,
+                  onOpenEntry: (entry) {
+                    Navigator.of(context).pop();
+                    widget.onOpenEntry(entry);
+                  },
+                  onEditEntry: widget.onEditEntry,
+                  onDeleteEntry: widget.onDeleteEntry,
+                  padding: const EdgeInsets.fromLTRB(18, 22, 18, 36),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _confirmTimelineDelete({
+  required BuildContext context,
+  required DiaryEntry entry,
+  required bool isWriteLocked,
+  required VoidCallback onWriteBlocked,
+  required Future<void> Function(DiaryEntry entry) onDeleteEntry,
+}) async {
+  if (isWriteLocked) {
+    onWriteBlocked();
+    return;
+  }
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('删除这篇日记？'),
+        content: Text('《${entry.title}》会先进入回收站，7 天后才会彻底清理。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      );
+    },
+  );
+
+  if (confirmed == true) {
+    await onDeleteEntry(entry);
   }
 }
 

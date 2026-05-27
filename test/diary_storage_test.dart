@@ -309,9 +309,6 @@ void main() {
         'sync_on_write': true,
         'minimum_sync_interval_minutes': 0,
         'max_destructive_actions': 3,
-        'sync_originals': false,
-        'download_originals': false,
-        'local_original_retention_days': 30,
       }),
     );
 
@@ -453,8 +450,7 @@ void main() {
       ).existsSync(),
       isTrue,
     );
-    expect(savedEntry.attachments.single.thumbnailPath, endsWith('.jpg'));
-    expect(savedEntry.attachments.single.previewPath, endsWith('.jpg'));
+    expect(savedEntry.attachments.single.path, endsWith('.jpg'));
   });
 
   test(
@@ -507,6 +503,74 @@ void main() {
       expect(await storage.loadEntryDraft(), isNull);
     },
   );
+
+  test('旧附件仍在 originals 目录时会自动迁移到新路径', () async {
+    final legacyDirectory = Directory(
+      '${tempDirectory.path}${Platform.pathSeparator}attachments${Platform.pathSeparator}entry_legacy${Platform.pathSeparator}originals',
+    );
+    await legacyDirectory.create(recursive: true);
+
+    final legacyFile = File(
+      '${legacyDirectory.path}${Platform.pathSeparator}att_legacy.jpg',
+    );
+    await legacyFile.writeAsBytes(_tinyPngBytes);
+
+    final entry = DiaryEntry(
+      id: 'entry_legacy',
+      author: '他',
+      title: '旧附件迁移',
+      content: '旧路径文件应该能被自动迁移到新结构。',
+      mood: '开心',
+      createdAt: DateTime(2026, 5, 7, 13, 9),
+      comments: const [],
+      attachments: [
+        DiaryAttachment(
+          id: 'att_legacy',
+          path: 'attachments/entry_legacy/att_legacy_0_legacy.jpg',
+          originalName: '0_legacy.jpg',
+          createdAt: DateTime(2026, 5, 7, 13, 8),
+        ),
+      ],
+    );
+
+    await storage.saveEntry(entry);
+    await storage.prepareFilesForSync();
+    final savedEntry = (await storage.loadEntries()).single;
+
+    final migratedFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}${savedEntry.attachments.single.path.replaceAll('/', Platform.pathSeparator)}',
+    );
+
+    expect(migratedFile.existsSync(), isTrue);
+    expect(legacyFile.existsSync(), isFalse);
+  });
+
+  test('相同内容的日记 JSON 不会被重复写入', () async {
+    final entry = DiaryEntry(
+      id: 'entry_no_rewrite',
+      author: '他',
+      title: 'No rewrite',
+      content: 'The file timestamp should stay stable.',
+      mood: '开心',
+      createdAt: DateTime(2026, 5, 7, 13, 9),
+      comments: const [],
+      attachments: const [],
+    );
+
+    await storage.saveEntries([entry]);
+    final firstFingerprint = (await storage.listSyncFiles()).singleWhere(
+      (file) => file.relativePath == 'entries/entry_no_rewrite.json',
+    ).fingerprint;
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await storage.saveEntries([entry]);
+
+    final secondFingerprint = (await storage.listSyncFiles()).singleWhere(
+      (file) => file.relativePath == 'entries/entry_no_rewrite.json',
+    ).fingerprint;
+
+    expect(secondFingerprint, firstFingerprint);
+  });
 
   test('会列出可用于网盘同步的文件清单', () async {
     await storage.saveProfile(
@@ -594,7 +658,10 @@ void main() {
     expect(entries.single.id, 'entry_safe');
     expect(entries.single.attachments, hasLength(1));
     expect(entries.single.attachments.single.id, 'att_safe');
-    expect(entries.single.attachments.single.hasLocalOriginal, isFalse);
+    expect(
+      entries.single.attachments.single.path,
+      'attachments/entry_safe/previews/att_safe.png',
+    );
     expect(rewrittenJson['id'], 'entry_safe');
     expect(
       (rewrittenAttachments.single as Map<String, dynamic>).containsKey(

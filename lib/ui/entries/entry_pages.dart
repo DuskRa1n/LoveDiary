@@ -889,10 +889,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       final current = left[index];
       final baseline = right[index];
       if (current.id != baseline.id ||
-          current.path != baseline.path ||
-          current.thumbnailPath != baseline.thumbnailPath ||
-          current.previewPath != baseline.previewPath ||
-          current.originalPath != baseline.originalPath) {
+          current.path != baseline.path) {
         return false;
       }
     }

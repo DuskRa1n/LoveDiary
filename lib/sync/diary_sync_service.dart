@@ -9,6 +9,7 @@ class DiarySyncService {
     required this.provider,
     this.attachmentPolicy = const AttachmentSyncPolicy(),
     this.onRemoteProgress,
+    this.checkCancelled,
   });
 
   final DiaryStorage storage;
@@ -16,8 +17,10 @@ class DiarySyncService {
   final SyncProvider provider;
   final AttachmentSyncPolicy attachmentPolicy;
   final SyncProgressCallback? onRemoteProgress;
+  final SyncCancellationCheck? checkCancelled;
 
   Future<SyncPlan> buildPlan() async {
+    _checkCancelled();
     final localFiles = (await storage.listSyncFiles())
         .where((file) => attachmentPolicy.includeLocalPath(file.relativePath))
         .toList();
@@ -30,6 +33,7 @@ class DiarySyncService {
     final remoteSnapshot = await remoteSource.fetchSnapshot(
       baseline: syncState,
       onProgress: onRemoteProgress,
+      checkCancelled: checkCancelled,
     );
     final hasUsableRemoteBaseline = syncState.hasUsablePlanningBaseline;
     final remoteFiles = remoteSnapshot.files
@@ -55,9 +59,14 @@ class DiarySyncService {
     final actions = <SyncAction>[];
 
     for (final path in allPaths) {
+      _checkCancelled();
       final localFile = localByPath[path];
       final remoteFile = remoteByPath[path];
       final hasTombstone = tombstonePaths.contains(path);
+      final isLegacyRemoteAttachmentResidue =
+          localFile == null &&
+          remoteFile != null &&
+          _isLegacyRemoteAttachmentResidue(path);
       final lastLocalFingerprint = hasUsableRemoteBaseline
           ? syncState.lastKnownLocalFingerprints[path]
           : null;
@@ -77,6 +86,17 @@ class DiarySyncService {
             reason: remoteFile != null
                 ? 'local_deleted_after_last_sync'
                 : 'local_deleted_using_remote_baseline',
+          ),
+        );
+        continue;
+      }
+
+      if (isLegacyRemoteAttachmentResidue) {
+        actions.add(
+          SyncAction(
+            type: SyncActionType.deleteRemote,
+            relativePath: path,
+            reason: 'legacy_attachment_residue',
           ),
         );
         continue;
@@ -183,6 +203,10 @@ class DiarySyncService {
     );
   }
 
+  void _checkCancelled() {
+    checkCancelled?.call();
+  }
+
   SyncAction? _buildInitialSyncAction({
     required String path,
     required LocalSyncFile localFile,
@@ -220,5 +244,17 @@ class DiarySyncService {
       relativePath: path,
       reason: 'initial_sync_prefer_local',
     );
+  }
+
+  bool _isLegacyRemoteAttachmentResidue(String path) {
+    if (!SyncFilePolicy.isAttachmentPath(path)) {
+      return false;
+    }
+    final normalized = SyncFilePolicy.normalizeRelativePath(
+      path,
+      allowEmpty: false,
+    );
+    final segments = normalized.split('/');
+    return segments.length == 4;
   }
 }

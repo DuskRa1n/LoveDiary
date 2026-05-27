@@ -19,18 +19,23 @@ class FakeRemoteSource implements DiarySyncRemoteSource {
   Future<RemoteSyncSnapshot> fetchSnapshot({
     SyncState? baseline,
     SyncProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
   }) async {
     return snapshot;
   }
 
   @override
-  Future<void> deleteFile(String relativePath) async {}
+  Future<void> deleteFile(
+    String relativePath, {
+    SyncCancellationCheck? checkCancelled,
+  }) async {}
 
   @override
   Future<void> downloadFile({
     required String relativePath,
     required String targetAbsolutePath,
     required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
   }) async {}
 
   @override
@@ -38,6 +43,7 @@ class FakeRemoteSource implements DiarySyncRemoteSource {
     required String relativePath,
     required String absolutePath,
     required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
   }) async {}
 
   @override
@@ -52,8 +58,101 @@ class FailingUploadRemoteSource extends FakeRemoteSource {
     required String relativePath,
     required String absolutePath,
     required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
   }) async {
     throw StateError('upload failed');
+  }
+}
+
+class DelayedDownloadRemoteSource extends FakeRemoteSource {
+  DelayedDownloadRemoteSource(super.snapshot);
+
+  int activeDownloads = 0;
+  int maxActiveDownloads = 0;
+
+  @override
+  Future<void> downloadFile({
+    required String relativePath,
+    required String targetAbsolutePath,
+    required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
+    activeDownloads++;
+    if (activeDownloads > maxActiveDownloads) {
+      maxActiveDownloads = activeDownloads;
+    }
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      checkCancelled?.call();
+      final file = File(targetAbsolutePath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(relativePath);
+    } finally {
+      activeDownloads--;
+    }
+  }
+}
+
+class MemoryRemoteSource implements DiarySyncRemoteSource {
+  final Map<String, RemoteSyncFile> _filesByPath = {};
+  int _revisionCounter = 0;
+
+  @override
+  Future<RemoteSyncSnapshot> fetchSnapshot({
+    SyncState? baseline,
+    SyncProgressCallback? onProgress,
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
+    return RemoteSyncSnapshot(
+      cursor: 'memory_cursor_$_revisionCounter',
+      files: _filesByPath.values.toList()
+        ..sort((a, b) => a.relativePath.compareTo(b.relativePath)),
+    );
+  }
+
+  @override
+  Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
+
+  @override
+  Future<void> uploadFile({
+    required String relativePath,
+    required String absolutePath,
+    required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
+    final file = File(absolutePath);
+    final stat = await file.stat();
+    _revisionCounter++;
+    _filesByPath[relativePath] = RemoteSyncFile(
+      relativePath: relativePath,
+      revision: 'rev_$_revisionCounter',
+      fingerprint: '${stat.size}:${stat.modified.millisecondsSinceEpoch}',
+      modifiedAt: stat.modified,
+      size: stat.size,
+      isBinary: isBinary,
+    );
+  }
+
+  @override
+  Future<void> downloadFile({
+    required String relativePath,
+    required String targetAbsolutePath,
+    required bool isBinary,
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteFile(
+    String relativePath, {
+    SyncCancellationCheck? checkCancelled,
+  }) async {
+    checkCancelled?.call();
+    _filesByPath.remove(relativePath);
   }
 }
 
@@ -620,5 +719,134 @@ void main() {
     expect(state.canUseDelta, isFalse);
     expect(state.incompleteSyncActionCount, 1);
     expect(state.incompleteSyncCompletedCount, 0);
+  });
+
+  test('cleans legacy derived attachment files from OneDrive', () async {
+    final service = DiarySyncService(
+      storage: storage,
+      remoteSource: FakeRemoteSource(
+        RemoteSyncSnapshot(
+          cursor: 'cursor_legacy_attachment_cleanup',
+          files: [
+            RemoteSyncFile(
+              relativePath: 'attachments/entry_1/previews/att_1.jpg',
+              revision: 'rev_preview',
+              fingerprint: '10:10',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 10,
+              isBinary: true,
+            ),
+            RemoteSyncFile(
+              relativePath: 'attachments/entry_1/thumbnails/att_1.jpg',
+              revision: 'rev_thumb',
+              fingerprint: '10:11',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 10,
+              isBinary: true,
+            ),
+            RemoteSyncFile(
+              relativePath: 'attachments/entry_1/att_1.jpg',
+              revision: 'rev_current',
+              fingerprint: '10:12',
+              modifiedAt: DateTime(2026, 4, 9, 12, 0),
+              size: 10,
+              isBinary: true,
+            ),
+          ],
+        ),
+      ),
+      provider: SyncProvider.oneDrive,
+    );
+
+    final plan = await service.buildPlan();
+    final deleteRemotePaths = plan.actions
+        .where((action) => action.type == SyncActionType.deleteRemote)
+        .map((action) => action.relativePath)
+        .toList();
+
+    expect(
+      deleteRemotePaths,
+      contains('attachments/entry_1/previews/att_1.jpg'),
+    );
+    expect(
+      deleteRemotePaths,
+      contains('attachments/entry_1/thumbnails/att_1.jpg'),
+    );
+    expect(deleteRemotePaths, isNot(contains('attachments/entry_1/att_1.jpg')));
+  });
+
+  test('second sync does not re-upload unchanged json files', () async {
+    await storage.saveProfile(
+      CoupleProfile(
+        maleName: 'me',
+        femaleName: 'her',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+    );
+    await storage.saveEntries(DiaryStorage.seedEntries().take(1).toList());
+
+    final remoteSource = MemoryRemoteSource();
+    final firstExecutor = DiarySyncExecutor(
+      storage: storage,
+      remoteSource: remoteSource,
+      provider: SyncProvider.oneDrive,
+    );
+    final firstResult = await firstExecutor.sync();
+    expect(firstResult.uploadedPaths, isNotEmpty);
+
+    final secondExecutor = DiarySyncExecutor(
+      storage: storage,
+      remoteSource: remoteSource,
+      provider: SyncProvider.oneDrive,
+    );
+    final secondResult = await secondExecutor.sync();
+
+    expect(secondResult.uploadedPaths, isEmpty);
+    expect(secondResult.downloadedPaths, isEmpty);
+    expect(secondResult.deletedRemotePaths, isEmpty);
+    expect(secondResult.deletedLocalPaths, isEmpty);
+    expect(secondResult.conflictPaths, isEmpty);
+  });
+
+  test('executor downloads files with bounded concurrency', () async {
+    final remotePaths = [
+      'profile.json',
+      'entries/remote_1.json',
+      'entries/remote_2.json',
+      'entries/remote_3.json',
+      'entries/remote_4.json',
+    ];
+    final remoteSource = DelayedDownloadRemoteSource(
+      RemoteSyncSnapshot(
+        cursor: 'cursor_downloads',
+        files: [
+          for (var index = 0; index < remotePaths.length; index++)
+            RemoteSyncFile(
+              relativePath: remotePaths[index],
+              revision: 'rev_download_$index',
+              fingerprint: 'remote_download_$index',
+              modifiedAt: DateTime(2026, 4, 9, 12, index),
+              size: remotePaths[index].length,
+              isBinary: false,
+            ),
+        ],
+      ),
+    );
+
+    final executor = DiarySyncExecutor(
+      storage: storage,
+      remoteSource: remoteSource,
+      provider: SyncProvider.oneDrive,
+    );
+    final result = await executor.sync();
+
+    expect(result.downloadedPaths, unorderedEquals(remotePaths));
+    expect(remoteSource.maxActiveDownloads, greaterThan(1));
+    expect(remoteSource.maxActiveDownloads, lessThanOrEqualTo(3));
+    for (final path in remotePaths) {
+      final absolutePath = await storage.resolveSyncFileAbsolutePath(path);
+      expect(await File(absolutePath).exists(), isTrue);
+    }
   });
 }

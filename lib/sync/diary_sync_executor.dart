@@ -81,6 +81,15 @@ class SyncSafetyException implements Exception {
   String toString() => message;
 }
 
+class SyncCancelledException implements Exception {
+  const SyncCancelledException([this.message = 'Sync cancelled by user.']);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class _SyncActionSummary {
   const _SyncActionSummary({
     required this.uploads,
@@ -142,6 +151,8 @@ class _SyncActionSummary {
 }
 
 class DiarySyncExecutor {
+  static const _maxConcurrentDownloads = 3;
+
   const DiarySyncExecutor({
     required this.storage,
     required this.remoteSource,
@@ -149,6 +160,7 @@ class DiarySyncExecutor {
     this.onProgress,
     this.safetyPolicy = const SyncSafetyPolicy(),
     this.attachmentPolicy = const AttachmentSyncPolicy(),
+    this.checkCancelled,
   });
 
   final DiaryStorage storage;
@@ -157,24 +169,34 @@ class DiarySyncExecutor {
   final void Function(double progress, String label)? onProgress;
   final SyncSafetyPolicy safetyPolicy;
   final AttachmentSyncPolicy attachmentPolicy;
+  final SyncCancellationCheck? checkCancelled;
+
+  void _checkCancelled() {
+    checkCancelled?.call();
+  }
 
   Future<SyncExecutionResult> sync() async {
+    _checkCancelled();
     final stateAtStart = await storage.loadSyncState(provider);
     final forceFullRefresh = stateAtStart.hasIncompleteSync;
     onProgress?.call(0.04, '准备同步：整理本地附件');
     await _yieldToEventLoop();
+    _checkCancelled();
     await storage.prepareFilesForSync();
     onProgress?.call(0.08, '扫描状态：读取本地文件和 OneDrive 变更');
     await _yieldToEventLoop();
+    _checkCancelled();
     final planner = DiarySyncService(
       storage: storage,
       remoteSource: remoteSource,
       provider: provider,
       attachmentPolicy: attachmentPolicy,
       onRemoteProgress: (remoteProgress, label) {
+        _checkCancelled();
         final mappedProgress = 0.08 + remoteProgress.clamp(0, 1) * 0.12;
         onProgress?.call(mappedProgress, label);
       },
+      checkCancelled: _checkCancelled,
     );
     final plan = await planner.buildPlan();
     final sortedActions = [...plan.actions]..sort(_compareActions);
@@ -234,38 +256,56 @@ class DiarySyncExecutor {
         completedActions: 0,
       );
     }
-    for (var index = 0; index < sortedActions.length; index++) {
+    var completedActionCount = 0;
+    for (var index = 0; index < sortedActions.length;) {
       final action = sortedActions[index];
-      final startProgress = 0.28 + (index / totalActionCount) * 0.54;
-      final finishedProgress = 0.28 + ((index + 1) / totalActionCount) * 0.54;
+      if (action.type == SyncActionType.download) {
+        final downloadActions = <SyncAction>[];
+        while (index < sortedActions.length &&
+            sortedActions[index].type == SyncActionType.download) {
+          downloadActions.add(sortedActions[index]);
+          index++;
+        }
+        downloadedPaths.addAll(
+          await _downloadBatch(
+            actions: downloadActions,
+            completedActionCountAtStart: completedActionCount,
+            totalActionCount: totalActionCount,
+            totalActions: sortedActions.length,
+          ),
+        );
+        completedActionCount += downloadActions.length;
+        continue;
+      }
+
+      final startProgress =
+          0.28 + (completedActionCount / totalActionCount) * 0.54;
+      final finishedProgress =
+          0.28 + ((completedActionCount + 1) / totalActionCount) * 0.54;
       onProgress?.call(
         startProgress,
-        _labelForAction(action, current: index + 1, total: totalActionCount),
+        _labelForAction(
+          action,
+          current: completedActionCount + 1,
+          total: totalActionCount,
+        ),
       );
       await _yieldToEventLoop();
+      _checkCancelled();
 
       switch (action.type) {
         case SyncActionType.download:
-          final targetAbsolutePath = await storage.resolveSyncFileAbsolutePath(
-            action.relativePath,
-          );
-          await _ensureParentDirectory(targetAbsolutePath);
-          await remoteSource.downloadFile(
-            relativePath: action.relativePath,
-            targetAbsolutePath: targetAbsolutePath,
-            isBinary: !_isJsonPath(action.relativePath),
-          );
-          downloadedPaths.add(action.relativePath);
           break;
         case SyncActionType.upload:
           final localFile = localByPath[action.relativePath];
           if (localFile == null) {
-            continue;
+            break;
           }
           await remoteSource.uploadFile(
             relativePath: localFile.relativePath,
             absolutePath: localFile.absolutePath,
             isBinary: localFile.isBinary,
+            checkCancelled: _checkCancelled,
           );
           uploadedPaths.add(action.relativePath);
           break;
@@ -274,7 +314,10 @@ class DiarySyncExecutor {
           deletedLocalPaths.add(action.relativePath);
           break;
         case SyncActionType.deleteRemote:
-          await remoteSource.deleteFile(action.relativePath);
+          await remoteSource.deleteFile(
+            action.relativePath,
+            checkCancelled: _checkCancelled,
+          );
           deletedRemotePaths.add(action.relativePath);
           break;
         case SyncActionType.conflict:
@@ -284,20 +327,24 @@ class DiarySyncExecutor {
         finishedProgress,
         _completedLabelForAction(
           action,
-          current: index + 1,
+          current: completedActionCount + 1,
           total: totalActionCount,
         ),
       );
+      completedActionCount++;
       await _markSyncIncomplete(
         totalActions: sortedActions.length,
-        completedActions: index + 1,
+        completedActions: completedActionCount,
         lastPath: action.relativePath,
       );
       await _yieldToEventLoop();
+      _checkCancelled();
+      index++;
     }
 
     onProgress?.call(0.9, '刷新同步记录：保存本地和 OneDrive 最新状态');
     await _yieldToEventLoop();
+    _checkCancelled();
     await _refreshSyncState(
       deletedRemotePaths: deletedRemotePaths,
       forceFullScan: forceFullRefresh,
@@ -397,6 +444,7 @@ class DiarySyncExecutor {
       return;
     }
 
+    _checkCancelled();
     final stateAtStart = await storage.loadSyncState(provider);
     final forceFullRefresh = stateAtStart.hasIncompleteSync;
     final localFiles = await storage.listSyncFiles();
@@ -410,6 +458,7 @@ class DiarySyncExecutor {
     );
     var completedActions = 0;
     for (final entry in preferLocalByPath.entries) {
+      _checkCancelled();
       final relativePath = entry.key;
       if (entry.value) {
         final localFile = localByPath[relativePath];
@@ -426,6 +475,7 @@ class DiarySyncExecutor {
           relativePath: localFile.relativePath,
           absolutePath: localFile.absolutePath,
           isBinary: localFile.isBinary,
+          checkCancelled: _checkCancelled,
         );
         completedActions++;
         await _markSyncIncomplete(
@@ -444,6 +494,7 @@ class DiarySyncExecutor {
         relativePath: relativePath,
         targetAbsolutePath: targetAbsolutePath,
         isBinary: !_isJsonPath(relativePath),
+        checkCancelled: _checkCancelled,
       );
       completedActions++;
       await _markSyncIncomplete(
@@ -454,6 +505,116 @@ class DiarySyncExecutor {
     }
 
     await _refreshSyncState(forceFullScan: forceFullRefresh);
+  }
+
+  Future<List<String>> _downloadBatch({
+    required List<SyncAction> actions,
+    required int completedActionCountAtStart,
+    required int totalActionCount,
+    required int totalActions,
+  }) async {
+    if (actions.isEmpty) {
+      return const [];
+    }
+
+    final downloadedPaths = <String>[];
+    var nextActionIndex = 0;
+    var completedInBatch = 0;
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    Future<void> markerTail = Future<void>.value();
+
+    void queueCheckpoint({
+      required int completedActions,
+      required String lastPath,
+    }) {
+      markerTail = markerTail.then(
+        (_) => _markSyncIncomplete(
+          totalActions: totalActions,
+          completedActions: completedActions,
+          lastPath: lastPath,
+        ),
+      );
+    }
+
+    Future<void> worker() async {
+      while (true) {
+        if (firstError != null) {
+          return;
+        }
+        final localIndex = nextActionIndex;
+        nextActionIndex++;
+        if (localIndex >= actions.length) {
+          return;
+        }
+
+        final action = actions[localIndex];
+        try {
+          _checkCancelled();
+          final currentOrdinal = completedActionCountAtStart + localIndex + 1;
+          final startProgress =
+              0.28 + ((currentOrdinal - 1) / totalActionCount) * 0.54;
+          onProgress?.call(
+            startProgress,
+            _labelForAction(
+              action,
+              current: currentOrdinal,
+              total: totalActionCount,
+            ),
+          );
+          await _yieldToEventLoop();
+          _checkCancelled();
+
+          final targetAbsolutePath = await storage.resolveSyncFileAbsolutePath(
+            action.relativePath,
+          );
+          await _ensureParentDirectory(targetAbsolutePath);
+          await remoteSource.downloadFile(
+            relativePath: action.relativePath,
+            targetAbsolutePath: targetAbsolutePath,
+            isBinary: !_isJsonPath(action.relativePath),
+            checkCancelled: _checkCancelled,
+          );
+          downloadedPaths.add(action.relativePath);
+
+          final completedActions =
+              completedActionCountAtStart + (++completedInBatch);
+          final finishedProgress =
+              0.28 + (completedActions / totalActionCount) * 0.54;
+          onProgress?.call(
+            finishedProgress,
+            _completedLabelForAction(
+              action,
+              current: completedActions,
+              total: totalActionCount,
+            ),
+          );
+          queueCheckpoint(
+            completedActions: completedActions,
+            lastPath: action.relativePath,
+          );
+          await _yieldToEventLoop();
+          _checkCancelled();
+        } catch (error, stackTrace) {
+          firstError ??= error;
+          firstStackTrace ??= stackTrace;
+          return;
+        }
+      }
+    }
+
+    final workerCount = actions.length < _maxConcurrentDownloads
+        ? actions.length
+        : _maxConcurrentDownloads;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
+    await markerTail;
+
+    final error = firstError;
+    if (error != null) {
+      Error.throwWithStackTrace(error, firstStackTrace ?? StackTrace.current);
+    }
+
+    return downloadedPaths;
   }
 
   void _enforceSafety(List<SyncAction> actions) {
