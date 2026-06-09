@@ -8,7 +8,7 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDirectory '..')
 $flutter = $env:FLUTTER_BIN
 if ([string]::IsNullOrWhiteSpace($flutter)) {
-  $flutter = 'D:\Software\flutter\bin\flutter.bat'
+  $flutter = 'flutter'
 }
 
 if (-not (Test-Path -LiteralPath $flutter)) {

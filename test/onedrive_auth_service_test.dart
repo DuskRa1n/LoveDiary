@@ -1,38 +1,22 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/data/diary_storage.dart';
-import 'package:love_diary/data/secret_store.dart';
 import 'package:love_diary/sync/onedrive/onedrive_auth_service.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
 
 import 'test_utils.dart';
 
-class MemorySecretStore implements SecretStore {
-  final Map<String, String> _values = {};
-
-  @override
-  Future<void> delete(String key) async {
-    _values.remove(key);
-  }
-
-  @override
-  Future<String?> read(String key) async {
-    return _values[key];
-  }
-
-  @override
-  Future<void> write(String key, String value) async {
-    _values[key] = value;
-  }
-}
-
 void main() {
   late Directory tempDirectory;
   late DiaryStorage storage;
   late MemorySecretStore secretStore;
   late OneDriveAuthService authService;
+  HttpServer? tokenServer;
+  StreamSubscription<HttpRequest>? tokenServerSubscription;
 
   setUp(() async {
     tempDirectory = await Directory.systemTemp.createTemp(
@@ -47,8 +31,29 @@ void main() {
   });
 
   tearDown(() async {
+    authService.dispose();
+    await tokenServerSubscription?.cancel();
+    await tokenServer?.close(force: true);
     await deleteTempDirectory(tempDirectory);
   });
+
+  Future<Uri> startTokenServer(
+    Map<String, dynamic> Function(HttpRequest request, Map<String, String> form)
+    handler,
+  ) async {
+    tokenServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    tokenServerSubscription = tokenServer!.listen((request) async {
+      final body = await utf8.decoder.bind(request).join();
+      final form = Uri.splitQueryString(body);
+      final payload = handler(request, form);
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(payload));
+      await request.response.close();
+    });
+    return Uri.parse(
+      'http://${tokenServer!.address.host}:${tokenServer!.port}',
+    );
+  }
 
   group('OneDriveAuthService', () {
     test('loadConfig returns null when no config exists', () async {
@@ -143,18 +148,109 @@ void main() {
     );
 
     test('getValidAccessToken returns valid token when not expired', () async {
+      final accessToken = fakeAccessToken('cached');
       final config = OneDriveSyncConfig(
         clientId: 'test_client_id',
         tenant: 'common',
         remoteFolder: 'test_folder',
-        accessToken: 'test_access_token',
+        accessToken: accessToken,
         refreshToken: 'test_refresh_token',
         expiresAt: DateTime.now().add(const Duration(hours: 1)),
       );
       await storage.saveOneDriveSyncConfig(config);
 
       final token = await authService.getValidAccessToken();
-      expect(token, equals('test_access_token'));
+      expect(token, equals(accessToken));
+    });
+
+    test('getValidAccessToken returns opaque token when not expired', () async {
+      const accessToken = 'opaque_access_token_from_provider';
+      final config = OneDriveSyncConfig(
+        clientId: 'test_client_id',
+        tenant: 'common',
+        remoteFolder: 'test_folder',
+        accessToken: accessToken,
+        refreshToken: 'test_refresh_token',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      );
+      await storage.saveOneDriveSyncConfig(config);
+
+      final token = await authService.getValidAccessToken();
+      expect(token, equals(accessToken));
+    });
+
+    test('getValidAccessToken refreshes cached token when forced', () async {
+      const refreshedToken = 'new_opaque_access_token';
+      final requestedPaths = <String>[];
+      final submittedForms = <Map<String, String>>[];
+      final authorityUri = await startTokenServer((request, form) {
+        requestedPaths.add(request.uri.path);
+        submittedForms.add(form);
+        return {
+          'access_token': refreshedToken,
+          'refresh_token': 'new_refresh_token',
+          'expires_in': 3600,
+        };
+      });
+      authService.dispose();
+      authService = OneDriveAuthService(
+        storage: storage,
+        authorityBaseUri: authorityUri,
+      );
+      final config = OneDriveSyncConfig(
+        clientId: 'test_client_id',
+        tenant: 'common',
+        remoteFolder: 'test_folder',
+        accessToken: 'old_access_token',
+        refreshToken: 'old_refresh_token',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      );
+      await storage.saveOneDriveSyncConfig(config);
+
+      final token = await authService.getValidAccessToken(forceRefresh: true);
+      final savedConfig = await storage.loadOneDriveSyncConfig();
+
+      expect(token, equals(refreshedToken));
+      expect(savedConfig?.accessToken, equals(refreshedToken));
+      expect(savedConfig?.refreshToken, equals('new_refresh_token'));
+      expect(requestedPaths, equals(['/common/oauth2/v2.0/token']));
+      expect(submittedForms.single['grant_type'], equals('refresh_token'));
+      expect(submittedForms.single['client_id'], equals('test_client_id'));
+      expect(
+        submittedForms.single['refresh_token'],
+        equals('old_refresh_token'),
+      );
+    });
+
+    test('normalizes malformed JWT error message', () {
+      final message = OneDriveAuthService.normalizeAuthErrorMessage(
+        'IDX14100: JWT is not well formed, there are no dots (.).',
+        'fallback',
+      );
+
+      expect(message, equals(OneDriveAuthService.invalidAccessTokenMessage));
+    });
+
+    test('normalizes used device code error message', () {
+      final message = OneDriveAuthService.normalizeAuthErrorMessage(
+        'AADSTS70000: The provided value for the input parameter '
+            'device_code has already been used.',
+        'fallback',
+      );
+
+      expect(message, equals(OneDriveAuthService.usedDeviceCodeMessage));
     });
   });
+}
+
+String fakeAccessToken(String subject) {
+  String segment(Object value) {
+    return base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+  }
+
+  return [
+    segment({'alg': 'none', 'typ': 'JWT'}),
+    segment({'sub': subject}),
+    segment({'sig': 'test'}),
+  ].join('.');
 }

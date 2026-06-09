@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../data/diary_storage.dart';
+import '../utils/app_log.dart';
 import 'diary_sync_service.dart';
 import 'sync_models.dart';
 import 'sync_remote_source.dart';
@@ -82,7 +83,7 @@ class SyncSafetyException implements Exception {
 }
 
 class SyncCancelledException implements Exception {
-  const SyncCancelledException([this.message = 'Sync cancelled by user.']);
+  const SyncCancelledException([this.message = '同步已被用户取消。']);
 
   final String message;
 
@@ -410,6 +411,7 @@ class DiarySyncExecutor {
         mood: (payload['mood'] as String? ?? '').trim(),
       );
     } catch (_) {
+      AppLog.warn('解析冲突预览失败: ${file.absolutePath}');
       return SyncConflictSidePreview(
         modifiedAt: file.modifiedAt,
         size: file.size,

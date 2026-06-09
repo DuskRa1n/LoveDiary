@@ -24,6 +24,35 @@ class DiaryPalette {
   static const surfaceBorderAlpha = 0.70;
 }
 
+class DiaryTokens {
+  // Spacing
+  static const gapXs = 6.0;
+  static const gapSm = 10.0;
+  static const gapMd = 14.0;
+  static const gapLg = 18.0;
+  static const gapXl = 22.0;
+  static const gapXxl = 30.0;
+
+  // Border radius
+  static const radiusSm = 10.0;
+  static const radiusMd = 18.0;
+  static const radiusLg = 24.0;
+  static const radiusXl = 28.0;
+  static const radiusPill = 999.0;
+
+  // Typography weights
+  static const weightBody = FontWeight.w400;
+  static const weightLabel = FontWeight.w700;
+  static const weightTitle = FontWeight.w800;
+  static const weightHero = FontWeight.w900;
+
+  // Line heights
+  static const heightTight = 1.05;
+  static const heightBody = 1.6;
+  static const heightCaption = 1.35;
+  static const heightBadge = 1.1;
+}
+
 class DiaryPage extends StatelessWidget {
   const DiaryPage({
     super.key,
@@ -68,7 +97,9 @@ class DiaryBackground extends StatelessWidget {
       child: Stack(
         children: [
           const Positioned.fill(child: CustomPaint(painter: _PaperPainter())),
-          const Positioned.fill(child: _AmbientBackgroundMotion()),
+          const Positioned.fill(
+            child: RepaintBoundary(child: _AmbientBackgroundMotion()),
+          ),
         ],
       ),
     );
@@ -322,6 +353,7 @@ class _DiaryAmbientFloatState extends State<DiaryAmbientFloat>
 
   @override
   void dispose() {
+    _curve.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -422,7 +454,7 @@ class DiaryHero extends StatelessWidget {
                             eyebrow,
                             style: theme.textTheme.labelLarge?.copyWith(
                               color: DiaryPalette.rose,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: DiaryTokens.weightLabel,
                               letterSpacing: 1.2,
                             ),
                           ),
@@ -583,7 +615,7 @@ class DiaryCompactHeader extends StatelessWidget {
                       eyebrow,
                       style: theme.textTheme.labelMedium?.copyWith(
                         color: DiaryPalette.rose,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: DiaryTokens.weightLabel,
                         letterSpacing: 1,
                       ),
                     ),
@@ -592,7 +624,7 @@ class DiaryCompactHeader extends StatelessWidget {
                       title,
                       style: theme.textTheme.titleLarge?.copyWith(
                         color: DiaryPalette.ink,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: DiaryTokens.weightTitle,
                         letterSpacing: -0.2,
                       ),
                     ),
@@ -647,7 +679,7 @@ class DiarySectionHeader extends StatelessWidget {
                       title,
                       style: theme.textTheme.titleLarge?.copyWith(
                         color: DiaryPalette.ink,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: DiaryTokens.weightTitle,
                         letterSpacing: -0.2,
                       ),
                     ),
@@ -704,7 +736,7 @@ class DiaryBadge extends StatelessWidget {
         label,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
           color: foreground,
-          fontWeight: FontWeight.w800,
+          fontWeight: DiaryTokens.weightLabel,
           height: 1.1,
         ),
       ),
@@ -759,7 +791,7 @@ class DiaryEmptyState extends StatelessWidget {
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               color: DiaryPalette.ink,
-              fontWeight: FontWeight.w900,
+              fontWeight: DiaryTokens.weightTitle,
             ),
           ),
           if (subtitle?.trim().isNotEmpty == true) ...[

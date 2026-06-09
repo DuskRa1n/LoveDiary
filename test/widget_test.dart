@@ -7,20 +7,27 @@ import 'package:love_diary/data/diary_storage.dart';
 import 'package:love_diary/models/diary_models.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
+import 'package:love_diary/ui/attachments/attachment_widgets.dart';
+
+import 'test_utils.dart';
 
 class FakeDiaryStorage extends DiaryStorage {
   FakeDiaryStorage({
     required CoupleProfile profile,
     List<DiaryEntry>? entries,
     List<ScheduleItem>? schedules,
+    OneDriveSyncConfig? oneDriveConfig,
   }) : _profile = profile,
        _entries = List<DiaryEntry>.from(entries ?? const []),
-       _schedules = List<ScheduleItem>.from(schedules ?? const []);
+       _schedules = List<ScheduleItem>.from(schedules ?? const []),
+       _oneDriveConfig = oneDriveConfig;
 
   CoupleProfile _profile;
   List<DiaryEntry> _entries;
   List<ScheduleItem> _schedules;
+  OneDriveSyncConfig? _oneDriveConfig;
   DiaryDraft? _draft;
+  int maintenanceRuns = 0;
 
   @override
   Future<List<DiaryEntry>> loadEntries() async {
@@ -97,9 +104,38 @@ class FakeDiaryStorage extends DiaryStorage {
   }
 
   @override
-  Future<OneDriveSyncConfig?> loadOneDriveSyncConfig() async {
-    return null;
+  Future<AppSelfMaintenanceResult> runSelfMaintenance({
+    Duration staleTemporaryFileAge = const Duration(hours: 6),
+    Duration staleIncompleteSyncAge = const Duration(hours: 12),
+  }) async {
+    maintenanceRuns += 1;
+    return AppSelfMaintenanceResult(
+      indexedEntries: _entries.length,
+      deletedTemporaryFiles: 0,
+      purgedDustbinEntries: 0,
+      repairedSyncStates: 0,
+    );
   }
+
+  @override
+  Future<OneDriveSyncConfig?> loadOneDriveSyncConfig() async {
+    return _oneDriveConfig;
+  }
+
+  @override
+  Future<void> saveOneDriveSyncConfig(OneDriveSyncConfig config) async {
+    _oneDriveConfig = config;
+  }
+
+  @override
+  Future<void> clearOneDriveSyncConfig() async {
+    _oneDriveConfig = null;
+  }
+
+  @override
+  Future<void> resetSyncState([
+    SyncProvider provider = SyncProvider.oneDrive,
+  ]) async {}
 
   @override
   Future<void> saveEntryDraft(DiaryDraft draft) async {
@@ -153,6 +189,12 @@ void main() {
 
   Future<void> openActionMenu(WidgetTester tester) async {
     await tester.tap(find.byIcon(Icons.add_rounded).last);
+    await pumpTransition(tester);
+  }
+
+  Future<void> openUsSettings(WidgetTester tester) async {
+    await openActionMenu(tester);
+    await tester.tap(find.text('我们设置'));
     await pumpTransition(tester);
   }
 
@@ -211,7 +253,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -234,7 +276,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -257,7 +299,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -274,6 +316,96 @@ void main() {
     expect(find.text('添加日程'), findsNothing);
   });
 
+  testWidgets('我们设置里的关系信息可以打开并保存', (WidgetTester tester) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: seedEntries(),
+    );
+
+    await pumpApp(tester, storage);
+    await openUsSettings(tester);
+
+    await tester.tap(find.text('关系信息'));
+    await pumpTransition(tester);
+
+    expect(find.text('编辑我们'), findsOneWidget);
+    expect(find.text('保存资料'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), '新版我');
+    await tester.tap(find.text('保存资料'));
+    await pumpTransition(tester);
+
+    expect(storage._profile.maleName, '新版我');
+    expect(find.text('关系信息已保存'), findsOneWidget);
+  });
+
+  testWidgets('我们设置里的 OneDrive 同步可以打开并保存', (WidgetTester tester) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: seedEntries(),
+      oneDriveConfig: OneDriveSyncConfig(
+        clientId: 'client',
+        tenant: 'consumers',
+        remoteFolder: 'love_diary',
+        accessToken: 'header.payload.signature',
+        refreshToken: 'refresh',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+
+    await pumpApp(tester, storage);
+    await openUsSettings(tester);
+
+    await tester.tap(find.text('OneDrive 同步'));
+    await pumpTransition(tester);
+
+    expect(find.text('OneDrive 设置'), findsOneWidget);
+    expect(find.text('控制 OneDrive 同步'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(0), 'love_diary_v2');
+    await tester.enterText(find.byType(TextField).at(1), '');
+    await tester.enterText(find.byType(TextField).at(2), '5');
+    await tester.tap(find.text('保存'));
+    await pumpTransition(tester);
+
+    expect(storage._oneDriveConfig?.remoteFolder, 'love_diary_v2');
+    expect(storage._oneDriveConfig?.minimumSyncIntervalMinutes, 0);
+    expect(storage._oneDriveConfig?.maxDestructiveActions, 5);
+    expect(find.text('OneDrive 同步设置已保存'), findsOneWidget);
+  });
+
+  testWidgets('我们设置里的自检维护会执行并展示摘要', (WidgetTester tester) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: '我',
+        femaleName: '她',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: seedEntries(),
+    );
+
+    await pumpApp(tester, storage);
+    await openUsSettings(tester);
+
+    await tester.tap(find.text('自检维护'));
+    await pumpTransition(tester);
+
+    expect(storage.maintenanceRuns, 2);
+    expect(find.text('自检维护完成'), findsOneWidget);
+    expect(find.textContaining('已重建 3 篇日记索引'), findsOneWidget);
+  });
+
   testWidgets('点击添加日程会打开日程编辑页', (WidgetTester tester) async {
     final storage = FakeDiaryStorage(
       profile: CoupleProfile(
@@ -282,7 +414,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -304,7 +436,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
       schedules: [
         ScheduleItem(
           id: 'schedule_today',
@@ -340,7 +472,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -359,7 +491,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -383,7 +515,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -430,7 +562,7 @@ void main() {
         togetherSince: DateTime(2025, 2, 6),
         isOnboarded: true,
       ),
-      entries: DiaryStorage.seedEntries(),
+      entries: seedEntries(),
     );
 
     await pumpApp(tester, storage);
@@ -477,5 +609,43 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
 
     expect(storage._draft?.content, 'autosaved draft body');
+  });
+
+  testWidgets('discarding new diary clears draft and skips dispose autosave', (
+    WidgetTester tester,
+  ) async {
+    final storage = FakeDiaryStorage(
+      profile: CoupleProfile(
+        maleName: 'me',
+        femaleName: 'her',
+        togetherSince: DateTime(2025, 2, 6),
+        isOnboarded: true,
+      ),
+      entries: const [],
+    );
+
+    await pumpApp(tester, storage);
+    await openActionMenu(tester);
+    await tester.tap(find.byIcon(Icons.edit_note_rounded).last);
+    await pumpTransition(tester);
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'draft that should be discarded',
+    );
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(storage._draft?.content, 'draft that should be discarded');
+
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'draft that should be discarded after another edit',
+    );
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+    await pumpTransition(tester);
+    await tester.tap(find.text('放弃'));
+    await pumpTransition(tester);
+    await tester.pump();
+
+    expect(storage._draft, isNull);
   });
 }

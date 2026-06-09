@@ -1,4 +1,8 @@
-﻿part of '../../app.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../../models/diary_models.dart';
+import '../../ui/diary_design.dart';
 
 class ProfileSetupPage extends StatefulWidget {
   const ProfileSetupPage({
@@ -32,6 +36,7 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
   late final TextEditingController _femaleNameController;
   late DateTime _togetherSince;
   late String _currentUserRole;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -92,6 +97,9 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
   }
 
   Future<void> _submit() async {
+    if (_isSubmitting) {
+      return;
+    }
     if (!_guardWritableAction()) {
       return;
     }
@@ -108,8 +116,19 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
       isOnboarded: true,
     );
 
+    setState(() {
+      _isSubmitting = true;
+    });
     if (widget.onComplete != null) {
-      await widget.onComplete!(profile);
+      try {
+        await widget.onComplete!(profile);
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+          });
+        }
+      }
       return;
     }
 
@@ -223,9 +242,15 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
                 ),
                 const SizedBox(height: 24),
                 FilledButton(
-                  onPressed: isWriteLocked ? widget.onWriteBlocked : _submit,
+                  onPressed: _isSubmitting
+                      ? null
+                      : isWriteLocked
+                      ? widget.onWriteBlocked
+                      : _submit,
                   child: Text(
-                    isWriteLocked
+                    _isSubmitting
+                        ? '保存中...'
+                        : isWriteLocked
                         ? '同步中，稍后保存'
                         : widget.isFirstSetup
                         ? '开始记录'

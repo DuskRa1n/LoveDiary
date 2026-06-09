@@ -62,22 +62,6 @@ class OneDriveSyncConfig {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'client_id': clientId,
-      'tenant': tenant,
-      'remote_folder': remoteFolder,
-      'access_token': accessToken,
-      'refresh_token': refreshToken,
-      'expires_at': expiresAt.toIso8601String(),
-      'sync_on_write': syncOnWrite,
-      'minimum_sync_interval_minutes': minimumSyncIntervalMinutes,
-      'max_destructive_actions': maxDestructiveActions,
-      'account_name': accountName,
-      'account_email': accountEmail,
-    };
-  }
-
   Map<String, dynamic> toStorageJson() {
     return {
       'client_id': clientId,

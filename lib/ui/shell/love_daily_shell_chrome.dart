@@ -1,7 +1,11 @@
-part of '../../app.dart';
+import 'dart:ui' as ui;
 
-class _GlassActionPill extends StatelessWidget {
-  const _GlassActionPill({
+import 'package:flutter/material.dart';
+
+import '../../ui/diary_design.dart';
+
+class GlassActionPill extends StatelessWidget {
+  const GlassActionPill({
     super.key,
     required this.icon,
     required this.label,
@@ -25,14 +29,14 @@ class _GlassActionPill extends StatelessWidget {
             boxShadow: [
               if (isEnabled) ...[
                 BoxShadow(
-                  color: DiaryPalette.rose.withValues(alpha: 0.18),
-                  blurRadius: 24,
-                  offset: const Offset(0, 10),
+                  color: DiaryPalette.rose.withValues(alpha: 0.20),
+                  blurRadius: 28,
+                  offset: const Offset(0, 12),
                 ),
                 BoxShadow(
-                  color: DiaryPalette.white.withValues(alpha: 0.4),
-                  blurRadius: 2,
-                  offset: const Offset(0, -1),
+                  color: DiaryPalette.white.withValues(alpha: 0.50),
+                  blurRadius: 3,
+                  offset: const Offset(0, -2),
                 ),
               ],
             ],
@@ -40,7 +44,7 @@ class _GlassActionPill extends StatelessWidget {
           child: ClipRRect(
             borderRadius: radius,
             child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
               child: Container(
                 decoration: BoxDecoration(
                   borderRadius: radius,
@@ -49,17 +53,17 @@ class _GlassActionPill extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [
                       DiaryPalette.white.withValues(
-                        alpha: isEnabled ? 0.55 : 0.30,
+                        alpha: isEnabled ? 0.60 : 0.30,
                       ),
                       DiaryPalette.mist.withValues(
-                        alpha: isEnabled ? 0.25 : 0.12,
+                        alpha: isEnabled ? 0.28 : 0.12,
                       ),
                     ],
                   ),
                   border: Border.all(
-                    width: 1.2,
+                    width: 1.4,
                     color: DiaryPalette.white.withValues(
-                      alpha: isEnabled ? 0.80 : 0.50,
+                      alpha: isEnabled ? 0.85 : 0.50,
                     ),
                   ),
                 ),
@@ -131,8 +135,8 @@ class _GlassActionPill extends StatelessWidget {
   }
 }
 
-class _GlassPlusButton extends StatelessWidget {
-  const _GlassPlusButton({required this.isOpen, required this.onPressed});
+class GlassPlusButton extends StatelessWidget {
+  const GlassPlusButton({super.key, required this.isOpen, required this.onPressed});
 
   final bool isOpen;
   final VoidCallback onPressed;

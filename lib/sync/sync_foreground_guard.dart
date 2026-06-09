@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/app_log.dart';
+
 class SyncForegroundGuard {
   static const MethodChannel _channel = MethodChannel(
     'love_diary/sync_foreground',
@@ -50,11 +52,11 @@ class SyncForegroundGuard {
           .invokeMethod<void>(method, arguments)
           .timeout(_channelTimeout);
     } on TimeoutException catch (error) {
-      debugPrint('Sync foreground guard timed out: $error');
+      AppLog.warn('Sync foreground guard timed out: $error');
     } on PlatformException catch (error) {
-      debugPrint('Sync foreground guard failed: $error');
+      AppLog.warn('Sync foreground guard failed: $error');
     } catch (error) {
-      debugPrint('Sync foreground guard failed: $error');
+      AppLog.warn('Sync foreground guard failed: $error');
     }
   }
 }

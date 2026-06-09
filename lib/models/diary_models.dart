@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import '../utils/app_log.dart';
 
 class DiaryComment {
   const DiaryComment({
@@ -282,6 +282,12 @@ class ScheduleItem {
     return title;
   }
 
+  static int compareByDate(ScheduleItem a, ScheduleItem b) {
+    final byDate = a.date.compareTo(b.date);
+    if (byDate != 0) return byDate;
+    return a.title.compareTo(b.title);
+  }
+
   static DateTime _safeDate(int year, int month, int day) {
     final lastDay = DateTime(year, month + 1, 0).day;
     return DateTime(year, month, day > lastDay ? lastDay : day);
@@ -368,7 +374,7 @@ class DiaryEntry {
     final rawAttachments = json['attachments'] as List<dynamic>? ?? <dynamic>[];
 
     return DiaryEntry(
-      id: json['id'] as String,
+      id: json['id'] as String? ?? 'entry_${DateTime.now().microsecondsSinceEpoch}',
       author: json['author'] as String? ?? '他',
       title: json['title'] as String? ?? '',
       content: json['content'] as String? ?? '',
@@ -379,14 +385,19 @@ class DiaryEntry {
           : _parseDateTime(json['updated_at']),
       comments: rawComments
           .map(
-            (comment) => DiaryComment.fromJson(comment as Map<String, dynamic>),
+            (comment) => comment is Map<String, dynamic>
+                ? DiaryComment.fromJson(comment)
+                : null,
           )
+          .whereType<DiaryComment>()
           .toList(),
       attachments: rawAttachments
           .map(
-            (attachment) =>
-                DiaryAttachment.fromJson(attachment as Map<String, dynamic>),
+            (attachment) => attachment is Map<String, dynamic>
+                ? DiaryAttachment.fromJson(attachment)
+                : null,
           )
+          .whereType<DiaryAttachment>()
           .toList(),
     );
   }
@@ -459,12 +470,28 @@ class DiaryDraft {
   }
 }
 
+const List<String> kDiaryMoods = [
+  '开心',
+  '安心',
+  '温柔',
+  '想念',
+  '真诚',
+  '治愈',
+  '甜',
+  '难过',
+  '委屈',
+  '生气',
+  '焦虑',
+  '孤独',
+  '失落',
+];
+
 DateTime _parseDateTime(dynamic value) {
   if (value is String) {
     try {
       return DateTime.parse(value);
     } catch (error) {
-      debugPrint('日期解析失败: $error, 原始值: $value');
+      AppLog.error('日期解析失败: $error, 原始值: $value');
       return DateTime.now();
     }
   }

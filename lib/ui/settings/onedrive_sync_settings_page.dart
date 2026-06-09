@@ -1,7 +1,9 @@
-﻿part of '../../app.dart';
+import 'package:flutter/material.dart';
 
-class _OneDriveConfigFormData {
-  const _OneDriveConfigFormData({
+import '../../ui/diary_design.dart';
+
+class OneDriveConfigFormData {
+  const OneDriveConfigFormData({
     required this.remoteFolder,
     required this.syncOnWrite,
     required this.minimumSyncIntervalMinutes,
@@ -14,21 +16,22 @@ class _OneDriveConfigFormData {
   final int maxDestructiveActions;
 }
 
-class _OneDriveSyncSettingsPage extends StatefulWidget {
-  const _OneDriveSyncSettingsPage({
+class OneDriveSyncSettingsPage extends StatefulWidget {
+  const OneDriveSyncSettingsPage({
+    super.key,
     required this.defaults,
     required this.onDisconnect,
   });
 
-  final _OneDriveConfigFormData defaults;
+  final OneDriveConfigFormData defaults;
   final Future<bool> Function() onDisconnect;
 
   @override
-  State<_OneDriveSyncSettingsPage> createState() =>
+  State<OneDriveSyncSettingsPage> createState() =>
       _OneDriveSyncSettingsPageState();
 }
 
-class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
+class _OneDriveSyncSettingsPageState extends State<OneDriveSyncSettingsPage> {
   late final TextEditingController _remoteFolderController;
   late final TextEditingController _minimumIntervalController;
   late final TextEditingController _maxDestructiveActionsController;
@@ -135,20 +138,25 @@ class _OneDriveSyncSettingsPageState extends State<_OneDriveSyncSettingsPage> {
                         _remoteFolderController.text.trim().isEmpty
                         ? 'love_diary'
                         : _remoteFolderController.text.trim();
-                    final minimumInterval =
-                        int.tryParse(_minimumIntervalController.text.trim()) ??
-                        10;
+                    final minimumIntervalText = _minimumIntervalController.text
+                        .trim();
+                    final minimumInterval = minimumIntervalText.isEmpty
+                        ? 0
+                        : int.tryParse(minimumIntervalText) ??
+                              widget.defaults.minimumSyncIntervalMinutes;
+                    final maxDestructiveActionsText =
+                        _maxDestructiveActionsController.text.trim();
                     final maxDestructiveActions =
-                        int.tryParse(
-                          _maxDestructiveActionsController.text.trim(),
-                        ) ??
-                        3;
+                        maxDestructiveActionsText.isEmpty
+                        ? 3
+                        : int.tryParse(maxDestructiveActionsText) ??
+                              widget.defaults.maxDestructiveActions;
                     Navigator.of(context).pop(
-                      _OneDriveConfigFormData(
+                      OneDriveConfigFormData(
                         remoteFolder: remoteFolder,
                         syncOnWrite: _syncOnWrite,
-                        minimumSyncIntervalMinutes: minimumInterval < 1
-                            ? 1
+                        minimumSyncIntervalMinutes: minimumInterval < 0
+                            ? 0
                             : minimumInterval,
                         maxDestructiveActions: maxDestructiveActions < 0
                             ? 0

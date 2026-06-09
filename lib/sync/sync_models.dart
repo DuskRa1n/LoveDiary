@@ -409,7 +409,7 @@ class SyncFilePolicy {
       return normalized;
     }
 
-    throw FormatException('Refusing non-sync business path: $relativePath');
+    throw FormatException('拒绝非同步业务路径：$relativePath');
   }
 
   static String normalizeRelativePath(
@@ -421,17 +421,17 @@ class SyncFilePolicy {
       if (allowEmpty) {
         return '';
       }
-      throw const FormatException('Sync path must not be empty.');
+      throw const FormatException('同步路径不能为空。');
     }
     if (_isAbsolutePath(normalized)) {
-      throw FormatException('Refusing absolute sync path: $normalized');
+      throw FormatException('拒绝绝对同步路径：$normalized');
     }
 
     final segments = normalized.split('/');
     if (segments.any(
       (segment) => segment.isEmpty || segment == '.' || segment == '..',
     )) {
-      throw FormatException('Refusing unsafe sync path: $normalized');
+      throw FormatException('拒绝不安全的同步路径：$normalized');
     }
     return segments.join('/');
   }

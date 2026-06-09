@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/diary_models.dart';
 import 'diary_design.dart';
@@ -36,6 +37,12 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
   String? _selectedMood;
   DateTime? _selectedDate;
   Timer? _searchDebounce;
+  List<DiaryEntry>? _cachedEntrySource;
+  String? _cachedQuery;
+  String? _cachedMoodFilter;
+  DateTime? _cachedDateFilter;
+  List<String> _cachedMoods = const [];
+  List<DiaryEntry> _cachedFilteredEntries = const [];
 
   @override
   void dispose() {
@@ -66,6 +73,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _selectedDate = picked;
     });
@@ -90,7 +98,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
       builder: (context) {
         return AlertDialog(
           title: const Text('删除这篇日记？'),
-          content: Text('《${entry.title}》会先进入回收站，7 天后才会彻底清理。'),
+          content: Text('《${entry.title}》会进入回收站，7 天内可在"我们"页面找回。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -115,19 +123,31 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
   @override
   Widget build(BuildContext context) {
     final query = _searchController.text.trim().toLowerCase();
-    final moods = widget.entries.map((entry) => entry.mood).toSet().toList()
-      ..sort();
-    final filteredEntries = widget.entries.where((entry) {
-      final matchesQuery =
-          query.isEmpty ||
-          entry.title.toLowerCase().contains(query) ||
-          entry.content.toLowerCase().contains(query);
-      final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
-      final matchesDate =
-          _selectedDate == null ||
-          isSameDiaryDay(entry.createdAt, _selectedDate!);
-      return matchesQuery && matchesMood && matchesDate;
-    }).toList();
+
+    if (!identical(_cachedEntrySource, widget.entries) ||
+        _cachedQuery != query ||
+        _cachedMoodFilter != _selectedMood ||
+        _cachedDateFilter != _selectedDate) {
+      _cachedEntrySource = widget.entries;
+      _cachedQuery = query;
+      _cachedMoodFilter = _selectedMood;
+      _cachedDateFilter = _selectedDate;
+      _cachedMoods = widget.entries.map((entry) => entry.mood).toSet().toList()..sort();
+      _cachedFilteredEntries = widget.entries.where((entry) {
+        final matchesQuery =
+            query.isEmpty ||
+            entry.title.toLowerCase().contains(query) ||
+            entry.content.toLowerCase().contains(query);
+        final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
+        final matchesDate =
+            _selectedDate == null ||
+            isSameDiaryDay(entry.createdAt, _selectedDate!);
+        return matchesQuery && matchesMood && matchesDate;
+      }).toList();
+    }
+
+    final moods = _cachedMoods;
+    final filteredEntries = _cachedFilteredEntries;
     final hasFilter =
         query.isNotEmpty || _selectedMood != null || _selectedDate != null;
 
@@ -170,6 +190,7 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
             hasFilter: hasFilter,
             onQueryChanged: _onSearchChanged,
             onMoodSelected: (mood) {
+              HapticFeedback.selectionClick();
               setState(() {
                 _selectedMood = mood;
               });
@@ -210,23 +231,25 @@ class _RealTimelineTabState extends State<RealTimelineTab> {
 
         final entryIndex = index - 1;
         final entry = filteredEntries[entryIndex];
-        return DiaryReveal(
-          delay: Duration(milliseconds: 90 + (entryIndex.clamp(0, 5) * 45)),
-          offset: const Offset(0, 0.08),
-          child: _TimelineEntryRow(
-            entry: entry,
-            rootDirectoryPath: widget.rootDirectoryPath,
-            isFirst: entryIndex == 0,
-            isLast: entryIndex == filteredEntries.length - 1,
-            onTap: () => widget.onOpenEntry(entry),
-            onEdit: () {
-              if (widget.isWriteLocked) {
-                widget.onWriteBlocked();
-                return;
-              }
-              widget.onEditEntry(entry);
-            },
-            onDelete: () => _confirmDelete(entry),
+        return RepaintBoundary(
+          child: DiaryReveal(
+            delay: Duration(milliseconds: 90 + (entryIndex.clamp(0, 5) * 45)),
+            offset: const Offset(0, 0.08),
+            child: _TimelineEntryRow(
+              entry: entry,
+              rootDirectoryPath: widget.rootDirectoryPath,
+              isFirst: entryIndex == 0,
+              isLast: entryIndex == filteredEntries.length - 1,
+              onTap: () => widget.onOpenEntry(entry),
+              onEdit: () {
+                if (widget.isWriteLocked) {
+                  widget.onWriteBlocked();
+                  return;
+                }
+                widget.onEditEntry(entry);
+              },
+              onDelete: () => _confirmDelete(entry),
+            ),
           ),
         );
       },
@@ -273,28 +296,30 @@ class TimelineSection extends StatelessWidget {
         DiarySectionHeader(title: '时间轴'),
         const SizedBox(height: 14),
         for (var index = 0; index < entries.length; index++)
-          DiaryReveal(
-            delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
-            offset: const Offset(0, 0.06),
-            child: _TimelineEntryRow(
-              entry: entries[index],
-              rootDirectoryPath: rootDirectoryPath,
-              isFirst: index == 0,
-              isLast: index == entries.length - 1,
-              onTap: () => onOpenEntry(entries[index]),
-              onEdit: () {
-                if (isWriteLocked) {
-                  onWriteBlocked();
-                  return;
-                }
-                onEditEntry(entries[index]);
-              },
-              onDelete: () => _confirmTimelineDelete(
-                context: context,
+          RepaintBoundary(
+            child: DiaryReveal(
+              delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
+              offset: const Offset(0, 0.06),
+              child: _TimelineEntryRow(
                 entry: entries[index],
-                isWriteLocked: isWriteLocked,
-                onWriteBlocked: onWriteBlocked,
-                onDeleteEntry: onDeleteEntry,
+                rootDirectoryPath: rootDirectoryPath,
+                isFirst: index == 0,
+                isLast: index == entries.length - 1,
+                onTap: () => onOpenEntry(entries[index]),
+                onEdit: () {
+                  if (isWriteLocked) {
+                    onWriteBlocked();
+                    return;
+                  }
+                  onEditEntry(entries[index]);
+                },
+                onDelete: () => _confirmTimelineDelete(
+                  context: context,
+                  entry: entries[index],
+                  isWriteLocked: isWriteLocked,
+                  onWriteBlocked: onWriteBlocked,
+                  onDeleteEntry: onDeleteEntry,
+                ),
               ),
             ),
           ),
@@ -371,28 +396,30 @@ class TimelineSliverSection extends StatelessWidget {
             itemCount: entries.length,
             itemBuilder: (context, index) {
               final entry = entries[index];
-              return DiaryReveal(
-                delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
-                offset: const Offset(0, 0.06),
-                child: _TimelineEntryRow(
-                  entry: entry,
-                  rootDirectoryPath: rootDirectoryPath,
-                  isFirst: index == 0,
-                  isLast: index == entries.length - 1,
-                  onTap: () => onOpenEntry(entry),
-                  onEdit: () {
-                    if (isWriteLocked) {
-                      onWriteBlocked();
-                      return;
-                    }
-                    onEditEntry(entry);
-                  },
-                  onDelete: () => _confirmTimelineDelete(
-                    context: context,
+              return RepaintBoundary(
+                child: DiaryReveal(
+                  delay: Duration(milliseconds: 70 + (index.clamp(0, 5) * 38)),
+                  offset: const Offset(0, 0.06),
+                  child: _TimelineEntryRow(
                     entry: entry,
-                    isWriteLocked: isWriteLocked,
-                    onWriteBlocked: onWriteBlocked,
-                    onDeleteEntry: onDeleteEntry,
+                    rootDirectoryPath: rootDirectoryPath,
+                    isFirst: index == 0,
+                    isLast: index == entries.length - 1,
+                    onTap: () => onOpenEntry(entry),
+                    onEdit: () {
+                      if (isWriteLocked) {
+                        onWriteBlocked();
+                        return;
+                      }
+                      onEditEntry(entry);
+                    },
+                    onDelete: () => _confirmTimelineDelete(
+                      context: context,
+                      entry: entry,
+                      isWriteLocked: isWriteLocked,
+                      onWriteBlocked: onWriteBlocked,
+                      onDeleteEntry: onDeleteEntry,
+                    ),
                   ),
                 ),
               );
@@ -483,6 +510,11 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
   String? _selectedMood;
   DateTime? _selectedDate;
   Timer? _searchDebounce;
+  List<DiaryEntry>? _cachedEntrySource;
+  String? _cachedQuery;
+  String? _cachedMoodFilter;
+  DateTime? _cachedDateFilter;
+  List<DiaryEntry> _cachedFilteredEntries = const [];
 
   @override
   void dispose() {
@@ -513,6 +545,7 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
     if (picked == null) {
       return;
     }
+    if (!mounted) return;
     setState(() {
       _selectedDate = picked;
     });
@@ -528,17 +561,29 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
 
   List<DiaryEntry> get _filteredEntries {
     final query = _searchController.text.trim().toLowerCase();
-    return widget.entries.where((entry) {
-      final matchesQuery =
-          query.isEmpty ||
-          entry.title.toLowerCase().contains(query) ||
-          entry.content.toLowerCase().contains(query);
-      final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
-      final matchesDate =
-          _selectedDate == null ||
-          isSameDiaryDay(entry.createdAt, _selectedDate!);
-      return matchesQuery && matchesMood && matchesDate;
-    }).toList();
+
+    if (!identical(_cachedEntrySource, widget.entries) ||
+        _cachedQuery != query ||
+        _cachedMoodFilter != _selectedMood ||
+        _cachedDateFilter != _selectedDate) {
+      _cachedEntrySource = widget.entries;
+      _cachedQuery = query;
+      _cachedMoodFilter = _selectedMood;
+      _cachedDateFilter = _selectedDate;
+      _cachedFilteredEntries = widget.entries.where((entry) {
+        final matchesQuery =
+            query.isEmpty ||
+            entry.title.toLowerCase().contains(query) ||
+            entry.content.toLowerCase().contains(query);
+        final matchesMood = _selectedMood == null || entry.mood == _selectedMood;
+        final matchesDate =
+            _selectedDate == null ||
+            isSameDiaryDay(entry.createdAt, _selectedDate!);
+        return matchesQuery && matchesMood && matchesDate;
+      }).toList();
+    }
+
+    return _cachedFilteredEntries;
   }
 
   @override
@@ -579,7 +624,7 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
                               style: Theme.of(context).textTheme.titleLarge
                                   ?.copyWith(
                                     color: DiaryPalette.ink,
-                                    fontWeight: FontWeight.w900,
+                                    fontWeight: FontWeight.w800,
                                   ),
                             ),
                           ),
@@ -594,6 +639,7 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
                         hasFilter: hasFilter,
                         onQueryChanged: _onSearchChanged,
                         onMoodSelected: (mood) {
+                          HapticFeedback.selectionClick();
                           setState(() {
                             _selectedMood = mood;
                           });
@@ -626,7 +672,6 @@ class _TimelineSearchPageState extends State<TimelineSearchPage> {
                   isWriteLocked: widget.isWriteLocked,
                   onWriteBlocked: widget.onWriteBlocked,
                   onOpenEntry: (entry) {
-                    Navigator.of(context).pop();
                     widget.onOpenEntry(entry);
                   },
                   onEditEntry: widget.onEditEntry,
@@ -753,7 +798,7 @@ class _TimelineFilterPanel extends StatelessWidget {
                   '筛选日记',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: DiaryPalette.ink,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -1016,7 +1061,7 @@ class _TimelineEntryCard extends StatelessWidget {
                                         .titleMedium
                                         ?.copyWith(
                                           color: DiaryPalette.ink,
-                                          fontWeight: FontWeight.w900,
+                                          fontWeight: FontWeight.w800,
                                           height: 1.2,
                                         ),
                                   ),
@@ -1229,7 +1274,7 @@ class _TimelineEntryPreview extends StatelessWidget {
                             style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(
                                   color: DiaryPalette.white,
-                                  fontWeight: FontWeight.w900,
+                                  fontWeight: FontWeight.w800,
                                 ),
                           ),
                         ),

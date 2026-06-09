@@ -32,6 +32,10 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   OneDriveSyncConfig? _cachedConfig;
   String? _cachedAccessToken;
 
+  void dispose() {
+    _httpClient.close();
+  }
+
   @override
   Future<void> persistSnapshot(List<LocalSyncFile> localFiles) async {}
 
@@ -47,11 +51,17 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
 
   Future<String> _getAccessToken() async {
     final cached = _cachedAccessToken;
-    if (cached != null && cached.isNotEmpty) {
+    final cachedConfig = _cachedConfig;
+    if (cached != null &&
+        cached.isNotEmpty &&
+        cachedConfig != null &&
+        !cachedConfig.isExpired) {
       return cached;
     }
+    _cachedAccessToken = null;
     final accessToken = await authService.getValidAccessToken();
     _cachedAccessToken = accessToken;
+    _cachedConfig = await authService.requireConfig();
     return accessToken;
   }
 
@@ -112,9 +122,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     final localFile = File(absolutePath);
     final stat = await localFile.stat();
     if (stat.size == 0) {
-      throw const OneDriveAuthException(
-        'OneDrive cannot upload empty files in this sync flow.',
-      );
+      throw const OneDriveAuthException('OneDrive 不支持在此同步流程中上传空文件。');
     }
 
     await _ensureRemoteParentFolders(
@@ -158,7 +166,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         uploadSessionResponse.statusCode >= 300) {
       throw OneDriveAuthException(
         uploadSessionJson['error']?['message'] as String? ??
-            'Failed to create OneDrive upload session.',
+            '创建 OneDrive 上传会话失败。',
       );
     }
 
@@ -188,8 +196,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
             response.statusCode != 202) {
           final payload = _decodeJson(response.body);
           throw OneDriveAuthException(
-            payload['error']?['message'] as String? ??
-                'OneDrive chunk upload failed.',
+            payload['error']?['message'] as String? ?? 'OneDrive 分块上传失败。',
           );
         }
         start = endExclusive;
@@ -252,15 +259,13 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         metadataResponse.statusCode >= 300) {
       throw OneDriveAuthException(
         metadataPayload['error']?['message'] as String? ??
-            'Failed to read OneDrive metadata for $relativePath.',
+            '读取 $relativePath 的 OneDrive 元数据失败。',
       );
     }
 
     final downloadUrl = metadataPayload[_downloadUrlField] as String?;
     if (downloadUrl == null || downloadUrl.isEmpty) {
-      throw OneDriveAuthException(
-        'OneDrive did not return a download url for $relativePath.',
-      );
+      throw OneDriveAuthException('OneDrive 未返回 $relativePath 的下载链接。');
     }
 
     _downloadUrlsByPath[relativePath] = downloadUrl;
@@ -287,7 +292,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       final payload = _decodeJson(response.body);
       throw OneDriveAuthException(
         payload['error']?['message'] as String? ??
-            'Failed to delete $relativePath from OneDrive.',
+            '从 OneDrive 删除 $relativePath 失败。',
       );
     }
   }
@@ -373,9 +378,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   }) async {
     checkCancelled?.call();
     if (!baseline.canUseDelta) {
-      throw const OneDriveAuthException(
-        'OneDrive delta baseline is incomplete.',
-      );
+      throw const OneDriveAuthException('OneDrive 增量同步基线不完整。');
     }
 
     final nodes = {
@@ -384,9 +387,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     };
     final rootId = baseline.lastKnownRemoteRootId!;
     if (!nodes.containsKey(rootId)) {
-      throw const OneDriveAuthException(
-        'OneDrive remote root is missing from baseline.',
-      );
+      throw const OneDriveAuthException('OneDrive 远端根目录在基线中缺失。');
     }
 
     var nextUrl = baseline.lastKnownRemoteCursor!;
@@ -403,8 +404,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       final payload = _decodeJson(response.body);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw OneDriveAuthException(
-          payload['error']?['message'] as String? ??
-              'Failed to read OneDrive delta.',
+          payload['error']?['message'] as String? ?? '读取 OneDrive 增量变更失败。',
         );
       }
 
@@ -433,9 +433,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     }
 
     if (deltaLink == null || deltaLink.isEmpty) {
-      throw const OneDriveAuthException(
-        'OneDrive did not return a delta cursor.',
-      );
+      throw const OneDriveAuthException('OneDrive 未返回增量同步游标。');
     }
 
     onProgress?.call(0.82, 'OneDrive：根据 item id 重建远端路径');
@@ -477,9 +475,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       }
 
       if (!progressed) {
-        throw const OneDriveAuthException(
-          'OneDrive delta baseline is incomplete after remote changes.',
-        );
+        throw const OneDriveAuthException('OneDrive 增量基线在远端变更后不完整。');
       }
     }
   }
@@ -491,7 +487,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
   }) {
     final itemId = item['id'] as String?;
     if (itemId == null || itemId.isEmpty) {
-      throw const OneDriveAuthException('OneDrive delta item is missing id.');
+      throw const OneDriveAuthException('OneDrive 增量项缺少 id。');
     }
 
     if (item['deleted'] != null) {
@@ -503,9 +499,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     final isFolder = item['folder'] != null;
     final name = (item['name'] as String?) ?? existingNode?.name;
     if (name == null || name.isEmpty) {
-      throw const OneDriveAuthException(
-        'OneDrive delta item is missing a usable name.',
-      );
+      throw const OneDriveAuthException('OneDrive 增量项缺少有效名称。');
     }
 
     final parentItemId = itemId == rootId
@@ -571,8 +565,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       final payload = _decodeJson(response.body);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw OneDriveAuthException(
-          payload['error']?['message'] as String? ??
-              'Failed to list OneDrive folder children.',
+          payload['error']?['message'] as String? ?? '列出 OneDrive 文件夹子项失败。',
         );
       }
 
@@ -649,8 +642,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         final payload = _decodeJson(response.body);
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw OneDriveAuthException(
-            payload['error']?['message'] as String? ??
-                'Failed to read OneDrive delta cursor.',
+            payload['error']?['message'] as String? ?? '读取 OneDrive 增量游标失败。',
           );
         }
         nextUrl = payload['@odata.nextLink'] as String? ?? '';
@@ -677,14 +669,11 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     final payload = _decodeJson(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw OneDriveAuthException(
-        payload['error']?['message'] as String? ??
-            'Failed to read OneDrive folder metadata.',
+        payload['error']?['message'] as String? ?? '读取 OneDrive 文件夹元数据失败。',
       );
     }
     if (payload['folder'] == null) {
-      throw OneDriveAuthException(
-        'OneDrive path "$relativePath" exists but is not a folder.',
-      );
+      throw OneDriveAuthException('OneDrive 路径 "$relativePath" 存在但不是文件夹。');
     }
     return payload;
   }
@@ -761,7 +750,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw OneDriveAuthException(
         payload['error']?['message'] as String? ??
-            'Failed to create OneDrive folder $folderName.',
+            '创建 OneDrive 文件夹 $folderName 失败。',
       );
     }
   }
@@ -861,8 +850,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final payload = _decodeJson(response.body);
       throw OneDriveAuthException(
-        payload['error']?['message'] as String? ??
-            'Failed to upload file to OneDrive.',
+        payload['error']?['message'] as String? ?? '上传文件到 OneDrive 失败。',
       );
     }
   }
@@ -874,15 +862,40 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
     Map<String, String>? headers,
     List<int>? body,
   }) async {
-    return _sendAbsoluteRequest(
-      method: method,
-      uri: uri,
-      headers: {
-        HttpHeaders.authorizationHeader: 'Bearer $accessToken',
-        HttpHeaders.acceptHeader: 'application/json',
-        ...?headers,
-      },
-      body: body,
+    var bearerToken = accessToken;
+    for (var authAttempt = 0; authAttempt < 2; authAttempt++) {
+      final response = await _sendAbsoluteRequest(
+        method: method,
+        uri: uri,
+        headers: {
+          HttpHeaders.authorizationHeader: 'Bearer $bearerToken',
+          HttpHeaders.acceptHeader: 'application/json',
+          ...?headers,
+        },
+        body: body,
+      );
+      if (response.statusCode != HttpStatus.unauthorized) {
+        return response;
+      }
+
+      _cachedAccessToken = null;
+      if (authAttempt == 0) {
+        bearerToken = await authService.getValidAccessToken(forceRefresh: true);
+        _cachedAccessToken = bearerToken;
+        _cachedConfig = await authService.requireConfig();
+        continue;
+      }
+
+      throw OneDriveAuthException(
+        OneDriveAuthService.normalizeAuthErrorMessage(
+          _graphErrorMessage(response.body),
+          OneDriveAuthService.invalidAccessTokenMessage,
+        ),
+      );
+    }
+
+    throw const OneDriveAuthException(
+      OneDriveAuthService.invalidAccessTokenMessage,
     );
   }
 
@@ -926,6 +939,9 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
         return rawResponse;
       } catch (error) {
         lastError = error;
+        if (error is OneDriveAuthException) {
+          rethrow;
+        }
         if (!_isRetryableNetworkError(error) ||
             attempt >= _maxRequestAttempts) {
           throw OneDriveAuthException(_networkErrorMessage(uri, error));
@@ -962,9 +978,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
           continue;
         }
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw OneDriveAuthException(
-            'Failed to download $relativePath from OneDrive.',
-          );
+          throw OneDriveAuthException('从 OneDrive 下载 $relativePath 失败。');
         }
 
         await temporaryFile.parent.create(recursive: true);
@@ -1104,9 +1118,7 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       throw const _DeferredDeltaItemException();
     }
     if (!parentNode.isFolder) {
-      throw const OneDriveAuthException(
-        'OneDrive delta returned a file parent that is not a folder.',
-      );
+      throw const OneDriveAuthException('OneDrive 增量变更返回的文件父项不是文件夹。');
     }
     return parentNode.relativePath.isEmpty
         ? itemName
@@ -1175,6 +1187,20 @@ class OneDriveRemoteSource implements DiarySyncRemoteSource {
       chunks.addAll(data);
     }
     return Uint8List.fromList(chunks);
+  }
+
+  String? _graphErrorMessage(String body) {
+    try {
+      final payload = _decodeJson(body);
+      final error = payload['error'];
+      if (error is Map) {
+        return error['message'] as String? ?? error['code'] as String?;
+      }
+      return (payload['error_description'] as String?) ??
+          (payload['error'] as String?);
+    } on FormatException {
+      return body.trim().isEmpty ? null : body;
+    }
   }
 
   Map<String, dynamic> _decodeJson(String body) {

@@ -1,4 +1,10 @@
-﻿part of '../../app.dart';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../../models/diary_models.dart';
+import '../../ui/diary_design.dart';
 
 class ScheduleManagerPage extends StatefulWidget {
   const ScheduleManagerPage({
@@ -62,10 +68,10 @@ class _ScheduleManagerPageState extends State<ScheduleManagerPage> {
     setState(() {
       final index = _schedules.indexWhere((item) => item.id == result.id);
       if (index == -1) {
-        _schedules = [result, ..._schedules]..sort(_compareScheduleItems);
+        _schedules = [result, ..._schedules]..sort(ScheduleItem.compareByDate);
       } else {
         _schedules[index] = result;
-        _schedules.sort(_compareScheduleItems);
+        _schedules.sort(ScheduleItem.compareByDate);
       }
       _hasChanged = true;
     });
@@ -125,7 +131,7 @@ class _ScheduleManagerPageState extends State<ScheduleManagerPage> {
       month: _selectedDate,
     );
     final selectedOccurrences = monthOccurrences
-        .where((item) => isSameDay(item.date, _selectedDate))
+        .where((item) => isSameDiaryDay(item.date, _selectedDate))
         .toList();
 
     return PopScope(
@@ -246,6 +252,7 @@ class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
   late final TextEditingController _descriptionController;
   late ScheduleItemType _type;
   late DateTime _selectedDate;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -287,6 +294,9 @@ class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
   }
 
   void _submit() {
+    if (_isSubmitting) {
+      return;
+    }
     if (widget.writeLockedListenable.value) {
       widget.onWriteBlocked();
       return;
@@ -305,6 +315,9 @@ class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
     final now = DateTime.now();
     final initial = widget.initialSchedule;
     final description = _descriptionController.text.trim();
+    setState(() {
+      _isSubmitting = true;
+    });
     Navigator.of(context).pop(
       ScheduleItem(
         id: initial?.id ?? 'schedule_${now.microsecondsSinceEpoch}',
@@ -327,7 +340,10 @@ class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
         surfaceTintColor: Colors.transparent,
         title: Text(isEditing ? '编辑日程' : '添加日程'),
         actions: [
-          TextButton(onPressed: _submit, child: const Text('保存')),
+          TextButton(
+            onPressed: _isSubmitting ? null : _submit,
+            child: Text(_isSubmitting ? '保存中' : '保存'),
+          ),
           const SizedBox(width: 6),
         ],
       ),
@@ -419,10 +435,29 @@ class _ScheduleEditorPageState extends State<ScheduleEditorPage> {
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _submit,
-                      icon: const Icon(Icons.check_rounded),
-                      label: const Text('保存日程'),
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: widget.writeLockedListenable,
+                      builder: (context, isWriteLocked, _) {
+                        return FilledButton.icon(
+                          onPressed: isWriteLocked || _isSubmitting
+                              ? null
+                              : _submit,
+                          icon: Icon(
+                            _isSubmitting
+                                ? Icons.hourglass_top_rounded
+                                : isWriteLocked
+                                ? Icons.lock_rounded
+                                : Icons.check_rounded,
+                          ),
+                          label: Text(
+                            _isSubmitting
+                                ? '保存中...'
+                                : isWriteLocked
+                                ? '同步中，稍后保存'
+                                : '保存日程',
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -773,14 +808,6 @@ List<_ScheduleOccurrence> _scheduleOccurrencesForMonth({
     return a.item.title.compareTo(b.item.title);
   });
   return occurrences;
-}
-
-int _compareScheduleItems(ScheduleItem a, ScheduleItem b) {
-  final byDate = a.date.compareTo(b.date);
-  if (byDate != 0) {
-    return byDate;
-  }
-  return a.title.compareTo(b.title);
 }
 
 DateTime _scheduleDateOnly(DateTime date) {

@@ -3,31 +3,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_diary/data/diary_storage.dart';
-import 'package:love_diary/data/secret_store.dart';
 import 'package:love_diary/models/diary_models.dart';
 import 'package:love_diary/sync/onedrive/onedrive_models.dart';
 import 'package:love_diary/sync/sync_models.dart';
 
 import 'test_utils.dart';
-
-class MemorySecretStore implements SecretStore {
-  final Map<String, String> _values = {};
-
-  @override
-  Future<void> delete(String key) async {
-    _values.remove(key);
-  }
-
-  @override
-  Future<String?> read(String key) async {
-    return _values[key];
-  }
-
-  @override
-  Future<void> write(String key, String value) async {
-    _values[key] = value;
-  }
-}
 
 final List<int> _tinyPngBytes = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0n0AAAAASUVORK5CYII=',
@@ -257,6 +237,94 @@ void main() {
     expect(loadedTombstones.single.relativePath, 'entries/deleted_entry.json');
   });
 
+  test('自检维护会清理陈旧临时文件并重建索引', () async {
+    final entry = DiaryEntry(
+      id: 'entry_maintenance_1',
+      author: '他',
+      title: '维护测试',
+      content: '用于验证自检维护。',
+      mood: '安心',
+      createdAt: DateTime(2026, 4, 9, 10, 0),
+      comments: const [],
+      attachments: const [],
+    );
+    await storage.saveEntry(entry);
+    final rootDirectory = await storage.resolveRootDirectory();
+    final manifestFile = File(
+      '${rootDirectory.path}${Platform.pathSeparator}cache${Platform.pathSeparator}manifest.json',
+    );
+    if (await manifestFile.exists()) {
+      await manifestFile.delete();
+    }
+
+    final staleTempFile = File(
+      '${rootDirectory.path}${Platform.pathSeparator}entries${Platform.pathSeparator}entry_maintenance_1.json.tmp.1',
+    );
+    final freshTempFile = File(
+      '${rootDirectory.path}${Platform.pathSeparator}entries${Platform.pathSeparator}entry_maintenance_1.json.tmp.2',
+    );
+    await staleTempFile.writeAsString('stale');
+    await freshTempFile.writeAsString('fresh');
+    await staleTempFile.setLastModified(
+      DateTime.now().subtract(const Duration(hours: 8)),
+    );
+
+    final result = await storage.runSelfMaintenance(
+      staleTemporaryFileAge: const Duration(hours: 6),
+    );
+    final manifestJson =
+        jsonDecode(await manifestFile.readAsString()) as Map<String, dynamic>;
+
+    expect(result.indexedEntries, 1);
+    expect(result.deletedTemporaryFiles, 1);
+    expect(await staleTempFile.exists(), isFalse);
+    expect(await freshTempFile.exists(), isTrue);
+    expect(
+      (manifestJson['entries'] as List).single['id'],
+      'entry_maintenance_1',
+    );
+  });
+
+  test('自检维护会重置陈旧未完成同步基线', () async {
+    await storage.saveSyncState(
+      SyncState(
+        lastSyncedAt: DateTime(2026, 4, 9, 10, 0),
+        lastKnownRemoteCursor: 'cursor',
+        lastKnownRemoteRootId: 'root',
+        lastKnownLocalFingerprints: const {'profile.json': '1:1'},
+        lastKnownRemoteRevisions: const {'profile.json': 'rev'},
+        lastKnownRemoteNodes: const {
+          'root': OneDriveRemoteNode(
+            itemId: 'root',
+            parentItemId: null,
+            name: 'love_diary',
+            isFolder: true,
+            relativePath: '',
+          ),
+        },
+        incompleteSyncStartedAt: DateTime.now().subtract(
+          const Duration(hours: 13),
+        ),
+        incompleteSyncActionCount: 10,
+        incompleteSyncCompletedCount: 3,
+        incompleteSyncLastPath: 'profile.json',
+      ),
+    );
+
+    final result = await storage.runSelfMaintenance(
+      staleIncompleteSyncAge: const Duration(hours: 12),
+    );
+    final state = await storage.loadSyncState();
+
+    expect(result.repairedSyncStates, 1);
+    expect(state.incompleteSyncStartedAt, isNull);
+    expect(state.lastKnownRemoteCursor, isNull);
+    expect(state.lastKnownRemoteRootId, isNull);
+    expect(state.lastKnownRemoteRevisions, isEmpty);
+    expect(state.lastKnownRemoteNodes, isEmpty);
+    expect(state.lastFailureMessage, contains('全量扫描'));
+  });
+
   test('OneDrive 凭据会写入安全存储而不是配置文件', () async {
     await storage.saveOneDriveSyncConfig(
       OneDriveSyncConfig(
@@ -382,7 +450,7 @@ void main() {
       '${tempDirectory.path}${Platform.pathSeparator}dustbin${Platform.pathSeparator}entries${Platform.pathSeparator}entry_delete_1.json',
     );
 
-    expect(manifest, contains('"entries": []'));
+    expect(manifest, contains('"entries":[]'));
     expect(dustbinFile.existsSync(), isTrue);
     expect(
       tombstones.any(
@@ -558,16 +626,20 @@ void main() {
     );
 
     await storage.saveEntries([entry]);
-    final firstFingerprint = (await storage.listSyncFiles()).singleWhere(
-      (file) => file.relativePath == 'entries/entry_no_rewrite.json',
-    ).fingerprint;
+    final firstFingerprint = (await storage.listSyncFiles())
+        .singleWhere(
+          (file) => file.relativePath == 'entries/entry_no_rewrite.json',
+        )
+        .fingerprint;
 
     await Future<void>.delayed(const Duration(milliseconds: 20));
     await storage.saveEntries([entry]);
 
-    final secondFingerprint = (await storage.listSyncFiles()).singleWhere(
-      (file) => file.relativePath == 'entries/entry_no_rewrite.json',
-    ).fingerprint;
+    final secondFingerprint = (await storage.listSyncFiles())
+        .singleWhere(
+          (file) => file.relativePath == 'entries/entry_no_rewrite.json',
+        )
+        .fingerprint;
 
     expect(secondFingerprint, firstFingerprint);
   });
@@ -581,7 +653,7 @@ void main() {
         isOnboarded: true,
       ),
     );
-    await storage.saveEntries(DiaryStorage.seedEntries().take(1).toList());
+    await storage.saveEntries(seedEntries().take(1).toList());
     await storage.saveSyncState(SyncState.initial());
     await storage.saveTombstones(const []);
 
@@ -820,6 +892,81 @@ void main() {
       tombstones.any(
         (item) => item.relativePath == 'entries/entry_purge_now.json',
       ),
+      isTrue,
+    );
+  });
+
+  test('loads profile from backup when primary json is corrupted', () async {
+    final initialProfile = CoupleProfile(
+      maleName: 'initial',
+      femaleName: 'person',
+      togetherSince: DateTime(2025, 2, 6),
+      isOnboarded: true,
+    );
+    final updatedProfile = initialProfile.copyWith(maleName: 'updated');
+
+    await storage.saveProfile(initialProfile);
+    await storage.saveProfile(updatedProfile);
+
+    final profileFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}profile.json',
+    );
+    await profileFile.writeAsString('{broken json');
+
+    final loadedProfile = await storage.loadProfile();
+
+    expect(loadedProfile.maleName, 'initial');
+    expect(profileFile.readAsStringSync(), contains('"male_name": "initial"'));
+  });
+
+  test('loads draft from backup when primary draft json is corrupted', () async {
+    final initialDraft = DiaryDraft(
+      title: 'initial draft',
+      content: 'initial content',
+      selectedDate: DateTime(2026, 4, 9, 10, 0),
+      mood: '开心',
+      attachments: const [],
+      savedAt: DateTime(2026, 4, 9, 10, 1),
+    );
+    final updatedDraft = DiaryDraft(
+      title: 'updated draft',
+      content: 'updated content',
+      selectedDate: DateTime(2026, 4, 9, 10, 0),
+      mood: '开心',
+      attachments: const [],
+      savedAt: DateTime(2026, 4, 9, 10, 2),
+    );
+
+    await storage.saveEntryDraft(initialDraft);
+    await storage.saveEntryDraft(updatedDraft);
+
+    final draftFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}drafts${Platform.pathSeparator}entry_draft.json',
+    );
+    await draftFile.writeAsString('{broken json');
+
+    final loadedDraft = await storage.loadEntryDraft();
+
+    expect(loadedDraft?.title, 'initial draft');
+    expect(draftFile.readAsStringSync(), contains('"title": "initial draft"'));
+  });
+
+  test('compressed attachment fallback keeps the original extension', () async {
+    final sourceFile = File(
+      '${tempDirectory.path}${Platform.pathSeparator}bad_source.png',
+    );
+    await sourceFile.writeAsBytes([1, 2, 3, 4]);
+
+    final importedAttachment = await storage.importAttachment(
+      sourcePath: sourceFile.path,
+      fileName: 'bad_source.png',
+    );
+
+    expect(importedAttachment.path, endsWith('.png'));
+    expect(
+      File(
+        '${tempDirectory.path}${Platform.pathSeparator}${importedAttachment.path.replaceAll('/', Platform.pathSeparator)}',
+      ).existsSync(),
       isTrue,
     );
   });

@@ -2,7 +2,7 @@
 
 LoveDiary 是一个为两个人长期共同记录生活设计的情侣日记 App。
 
-当前发布重点是 Android，正式包名为 `com.ericchen.lovediary`，当前版本为 `1.3.5+80`。
+当前发布重点是 Android，正式包名为 `com.ericchen.lovediary`，当前版本为 `1.4.15+96`。
 
 ## 主要功能
 

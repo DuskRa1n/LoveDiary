@@ -217,7 +217,7 @@ class _MoodChip extends StatelessWidget {
         mood,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
           color: colors.foreground,
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
           height: 1,
         ),
       ),
@@ -402,7 +402,7 @@ class _DiaryHeatmapPanelState extends State<_DiaryHeatmapPanel> {
                       _monthLabel(_visibleMonth),
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: DiaryPalette.ink,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),

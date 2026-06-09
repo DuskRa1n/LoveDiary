@@ -1,4 +1,9 @@
-﻿part of '../../app.dart';
+﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../../data/diary_storage.dart';
+import '../../models/diary_models.dart';
+import '../../ui/diary_design.dart';
 
 class DustbinPage extends StatefulWidget {
   const DustbinPage({
@@ -163,9 +168,20 @@ class _DustbinPageState extends State<DustbinPage> {
           : DiaryPage(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
               child: _deletedEntries.isEmpty
-                  ? const DiaryEmptyState(
-                      title: '回收站是空的',
-                      icon: Icons.restore_from_trash_rounded,
+                  ? LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SingleChildScrollView(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                            child: const Center(
+                              child: DiaryEmptyState(
+                                title: '回收站是空的',
+                                icon: Icons.restore_from_trash_rounded,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     )
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

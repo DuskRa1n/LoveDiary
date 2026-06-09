@@ -1,4 +1,14 @@
-﻿part of '../../app.dart';
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../../models/diary_models.dart';
+import '../../ui/diary_design.dart';
+import '../attachments/attachment_widgets.dart';
 
 class EntryDetailPage extends StatefulWidget {
   const EntryDetailPage({
@@ -80,6 +90,8 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
       _isSavingComment = true;
     });
 
+    unawaited(HapticFeedback.lightImpact());
+
     try {
       final updatedEntry = await widget.onAddComment(
         _entry.id,
@@ -106,9 +118,12 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
       setState(() {
         _isSavingComment = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('评论保存失败，请稍后再试')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('评论保存失败，请稍后再试'),
+          action: SnackBarAction(label: '重试', onPressed: _submitComment),
+        ),
+      );
     }
   }
 
@@ -137,7 +152,7 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
       builder: (context) {
         return AlertDialog(
           title: const Text('删除这篇日记？'),
-          content: Text('《${_entry.title}》会从本地移除，并记录删除状态以便后续同步。'),
+          content: Text('《${_entry.title}》会进入回收站，7 天内可在"我们"页面找回。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -166,184 +181,222 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
   @override
   Widget build(BuildContext context) {
     final isWriteLocked = _isWriteLocked;
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: const Text('日记详情'),
-        backgroundColor: DiaryPalette.paper.withValues(alpha: 0.72),
-        surfaceTintColor: Colors.transparent,
-        flexibleSpace: ClipRect(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (_commentController.text.trim().isEmpty) {
+          Navigator.of(context).pop();
+          return;
+        }
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('评论还没发表'),
+            content: const Text('你输入的评论还没有发送，确定要离开吗？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('继续编辑'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('离开'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: const Text('日记详情'),
+          backgroundColor: DiaryPalette.paper.withValues(alpha: 0.72),
+          surfaceTintColor: Colors.transparent,
+          flexibleSpace: ClipRect(
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: const SizedBox.expand(),
+            ),
+          ),
+          actions: [
+            IconButton(
+              onPressed: isWriteLocked ? widget.onWriteBlocked : _editEntry,
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: '编辑日记',
+            ),
+            IconButton(
+              onPressed: isWriteLocked ? widget.onWriteBlocked : _deleteEntry,
+              icon: const Icon(Icons.delete_outline_rounded),
+              tooltip: '删除日记',
+            ),
+          ],
+        ),
+        bottomNavigationBar: ClipRect(
           child: BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: const SizedBox.expand(),
-          ),
-        ),
-        actions: [
-          IconButton(
-            onPressed: isWriteLocked ? widget.onWriteBlocked : _editEntry,
-            icon: const Icon(Icons.edit_outlined),
-            tooltip: '编辑日记',
-          ),
-          IconButton(
-            onPressed: isWriteLocked ? widget.onWriteBlocked : _deleteEntry,
-            icon: const Icon(Icons.delete_outline_rounded),
-            tooltip: '删除日记',
-          ),
-        ],
-      ),
-      bottomNavigationBar: ClipRect(
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            padding: EdgeInsets.fromLTRB(
-              16,
-              12,
-              16,
-              MediaQuery.paddingOf(context).bottom + 12,
-            ),
-            decoration: BoxDecoration(
-              color: DiaryPalette.paper.withValues(alpha: 0.82),
-              border: Border(
-                top: BorderSide(
-                  color: DiaryPalette.line.withValues(alpha: 0.6),
+            child: Container(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                MediaQuery.paddingOf(context).bottom + 12,
+              ),
+              decoration: BoxDecoration(
+                color: DiaryPalette.paper.withValues(alpha: 0.82),
+                border: Border(
+                  top: BorderSide(
+                    color: DiaryPalette.line.withValues(alpha: 0.6),
+                  ),
                 ),
               ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentController,
-                    enabled: !isWriteLocked,
-                    minLines: 1,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      hintText: '写一条评论...',
-                      hintStyle: TextStyle(
-                        color: DiaryPalette.wine.withValues(alpha: 0.5),
-                      ),
-                      filled: true,
-                      fillColor: DiaryPalette.white.withValues(alpha: 0.86),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: BorderSide(
-                          color: DiaryPalette.line.withValues(alpha: 0.6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _commentController,
+                      enabled: !isWriteLocked,
+                      minLines: 1,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: '写一条评论...',
+                        hintStyle: TextStyle(
+                          color: DiaryPalette.wine.withValues(alpha: 0.5),
+                        ),
+                        filled: true,
+                        fillColor: DiaryPalette.white.withValues(alpha: 0.86),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          borderSide: BorderSide(
+                            color: DiaryPalette.line.withValues(alpha: 0.6),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          borderSide: BorderSide(
+                            color: DiaryPalette.rose.withValues(alpha: 0.6),
+                            width: 1.4,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Container(
-                  decoration: BoxDecoration(
-                    color: DiaryPalette.rose,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: DiaryPalette.rose.withValues(alpha: 0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    onPressed: _isSavingComment
-                        ? null
-                        : isWriteLocked
-                        ? widget.onWriteBlocked
-                        : _submitComment,
-                    icon: _isSavingComment
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded, color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      body: DiaryPage(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          MediaQuery.paddingOf(context).top + kToolbarHeight + 12,
-          20,
-          32,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DiaryHero(
-              eyebrow: '日记详情',
-              title: _entry.title,
-              subtitle: _entry.content,
-              footer: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  DiaryBadge(label: _entry.author, tone: DiaryBadgeTone.sand),
-                  DiaryBadge(label: _entry.mood),
-                  DiaryBadge(
-                    label: formatDiaryDate(_entry.createdAt),
-                    tone: DiaryBadgeTone.ink,
-                  ),
-                  DiaryBadge(
-                    label: '${_entry.attachments.length} 张图',
-                    tone: DiaryBadgeTone.sand,
-                  ),
-                  if (_entry.updatedAt != null)
-                    DiaryBadge(
-                      label: '最近更新 ${formatDiaryShortDate(_entry.updatedAt!)}',
-                      tone: DiaryBadgeTone.ink,
+                  const SizedBox(width: 10),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: DiaryPalette.rose,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: DiaryPalette.rose.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
                     ),
+                    child: IconButton(
+                      onPressed: _isSavingComment
+                          ? null
+                          : isWriteLocked
+                          ? widget.onWriteBlocked
+                          : _submitComment,
+                      icon: _isSavingComment
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded, color: Colors.white),
+                    ),
+                  ),
                 ],
               ),
             ),
-            if (_entry.attachments.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              const DiarySectionHeader(title: '附图'),
-              const SizedBox(height: 10),
-              DiaryPanel(
-                padding: const EdgeInsets.all(10),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: AttachmentGrid(
-                    attachments: _entry.attachments,
-                    rootDirectoryPath: widget.rootDirectoryPath,
+          ),
+        ),
+        body: DiaryPage(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            MediaQuery.paddingOf(context).top + kToolbarHeight + 12,
+            20,
+            32,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DiaryHero(
+                eyebrow: '日记详情',
+                title: _entry.title,
+                subtitle: _entry.content,
+                footer: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    DiaryBadge(label: _entry.author, tone: DiaryBadgeTone.sand),
+                    DiaryBadge(label: _entry.mood),
+                    DiaryBadge(
+                      label: formatDiaryDate(_entry.createdAt),
+                      tone: DiaryBadgeTone.ink,
+                    ),
+                    DiaryBadge(
+                      label: '${_entry.attachments.length} 张图',
+                      tone: DiaryBadgeTone.sand,
+                    ),
+                    if (_entry.updatedAt != null)
+                      DiaryBadge(
+                        label:
+                            '最近更新 ${formatDiaryShortDate(_entry.updatedAt!)}',
+                        tone: DiaryBadgeTone.ink,
+                      ),
+                  ],
+                ),
+              ),
+              if (_entry.attachments.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                const DiarySectionHeader(title: '附图'),
+                const SizedBox(height: 10),
+                DiaryPanel(
+                  padding: const EdgeInsets.all(10),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: AttachmentGrid(
+                      attachments: _entry.attachments,
+                      rootDirectoryPath: widget.rootDirectoryPath,
+                    ),
                   ),
                 ),
-              ),
-            ],
-            const SizedBox(height: 18),
-            const DiarySectionHeader(title: '评论区'),
-            const SizedBox(height: 10),
-            if (_entry.comments.isEmpty)
-              const DiaryPanel(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-                child: DiaryEmptyState(
-                  title: '还没有评论',
-                  icon: Icons.chat_bubble_outline_rounded,
+              ],
+              const SizedBox(height: 18),
+              const DiarySectionHeader(title: '评论区'),
+              const SizedBox(height: 10),
+              if (_entry.comments.isEmpty)
+                const DiaryPanel(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                  child: DiaryEmptyState(
+                    title: '还没有评论',
+                    icon: Icons.chat_bubble_outline_rounded,
+                  ),
+                )
+              else
+                ..._entry.comments.map(
+                  (comment) => CommentCard(comment: comment),
                 ),
-              )
-            else
-              ..._entry.comments.map(
-                (comment) => CommentCard(comment: comment),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -353,18 +406,33 @@ class _EntryDetailPageState extends State<EntryDetailPage> {
 class CreateEntryPage extends StatefulWidget {
   const CreateEntryPage({
     super.key,
-    required this.storage,
     required this.profile,
     required this.writeLockedListenable,
     required this.onWriteBlocked,
+    required this.onLoadDraft,
+    required this.onSaveDraft,
+    required this.onClearDraft,
+    required this.onImportAttachment,
+    required this.onDeleteAttachments,
     this.initialEntry,
     this.rootDirectoryPath,
   });
 
-  final DiaryStorage storage;
+  static bool? _lastImportModeKeepOriginal;
+
   final CoupleProfile profile;
   final ValueListenable<bool> writeLockedListenable;
   final VoidCallback onWriteBlocked;
+  final Future<DiaryDraft?> Function() onLoadDraft;
+  final Future<void> Function(DiaryDraft draft) onSaveDraft;
+  final Future<void> Function() onClearDraft;
+  final Future<DiaryAttachment> Function({
+    required String sourcePath,
+    required String fileName,
+    required bool keepOriginal,
+  })
+  onImportAttachment;
+  final Future<void> Function(List<DiaryAttachment>) onDeleteAttachments;
   final DiaryEntry? initialEntry;
   final String? rootDirectoryPath;
 
@@ -386,6 +454,8 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   bool _isPickingImages = false;
   bool _isPreparingDraft = true;
   bool _isSavingDraftSilently = false;
+  bool _suppressDraftPersistence = false;
+  bool _isSubmitting = false;
   Timer? _draftAutosaveTimer;
   List<DiaryAttachment> _attachments = [];
   DiaryDraft? _lastSavedDraft;
@@ -424,13 +494,41 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _draftAutosaveTimer?.cancel();
-    unawaited(_saveDraftSilently(force: true));
     widget.writeLockedListenable.removeListener(_handleWriteLockChanged);
+
+    final title = _titleController.text;
+    final content = _contentController.text;
+
     _titleController.removeListener(_scheduleDraftAutosave);
     _contentController.removeListener(_scheduleDraftAutosave);
     _titleController.dispose();
     _contentController.dispose();
+
+    if (!_isEditMode && !_isPreparingDraft && !_suppressDraftPersistence) {
+      unawaited(_saveDraftFromCapturedText(title: title, content: content));
+    }
+
     super.dispose();
+  }
+
+  Future<void> _saveDraftFromCapturedText({
+    required String title,
+    required String content,
+  }) async {
+    if (_suppressDraftPersistence) {
+      return;
+    }
+    try {
+      final draft = DiaryDraft(
+        title: title,
+        content: content,
+        selectedDate: _selectedDate,
+        mood: _selectedMood,
+        attachments: _attachments,
+        savedAt: DateTime.now(),
+      );
+      await widget.onSaveDraft(draft);
+    } catch (_) {}
   }
 
   @override
@@ -438,7 +536,9 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
-      unawaited(_saveDraftSilently(force: true));
+      if (!_suppressDraftPersistence) {
+        unawaited(_saveDraftSilently(force: true));
+      }
     }
   }
 
@@ -462,7 +562,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   }
 
   Future<void> _restoreDraft() async {
-    final draft = await widget.storage.loadEntryDraft();
+    final draft = await widget.onLoadDraft();
     if (!mounted) {
       return;
     }
@@ -505,6 +605,10 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       return;
     }
 
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _selectedDate = DateTime(
         picked.year,
@@ -517,7 +621,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     _scheduleDraftAutosave();
   }
 
-  Future<void> _pickImages() async {
+  Future<void> _pickImages({bool forceShowSheet = false}) async {
     if (!_guardWritableAction()) {
       return;
     }
@@ -532,10 +636,21 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       return;
     }
 
-    final importMode = await _showAttachmentImportModeSheet();
+    _AttachmentImportMode? importMode;
+    if (!forceShowSheet &&
+        CreateEntryPage._lastImportModeKeepOriginal != null) {
+      importMode = CreateEntryPage._lastImportModeKeepOriginal!
+          ? _AttachmentImportMode.original
+          : _AttachmentImportMode.compressed;
+    } else {
+      importMode = await _showAttachmentImportModeSheet();
+    }
     if (!mounted || importMode == null) {
       return;
     }
+
+    CreateEntryPage._lastImportModeKeepOriginal =
+        importMode == _AttachmentImportMode.original;
 
     setState(() {
       _isPickingImages = true;
@@ -561,7 +676,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       final List<DiaryAttachment> savedAttachments = [];
       for (var index = 0; index < files.length; index++) {
         final file = files[index];
-        final savedAttachment = await widget.storage.importAttachment(
+        final savedAttachment = await widget.onImportAttachment(
           sourcePath: file.path,
           fileName: '${index}_${file.name}',
           keepOriginal: importMode == _AttachmentImportMode.original,
@@ -597,7 +712,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     }
 
     if (_isTemporaryAttachment(attachment)) {
-      await widget.storage.deleteAttachments([attachment]);
+      await widget.onDeleteAttachments([attachment]);
     }
 
     setState(() {
@@ -652,7 +767,10 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   }
 
   void _scheduleDraftAutosave() {
-    if (_isEditMode || _isPreparingDraft || _isWriteLocked) {
+    if (_isEditMode ||
+        _isPreparingDraft ||
+        _isWriteLocked ||
+        _suppressDraftPersistence) {
       return;
     }
     _draftAutosaveTimer?.cancel();
@@ -665,6 +783,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     if (_isEditMode ||
         _isPreparingDraft ||
         _isWriteLocked ||
+        _suppressDraftPersistence ||
         _isSavingDraftSilently) {
       return;
     }
@@ -678,7 +797,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
         draft.title != baseline.title ||
         draft.content != baseline.content ||
         draft.mood != baseline.mood ||
-        !isSameDay(draft.selectedDate, baseline.selectedDate) ||
+        !isSameDiaryDay(draft.selectedDate, baseline.selectedDate) ||
         !_sameAttachments(draft.attachments, baseline.attachments);
 
     if (!force && (!isChanged || isEmpty)) {
@@ -686,7 +805,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     }
     if (isEmpty) {
       if (baseline != null) {
-        await widget.storage.clearEntryDraft();
+        await widget.onClearDraft();
         _lastSavedDraft = null;
       }
       return;
@@ -694,7 +813,12 @@ class _CreateEntryPageState extends State<CreateEntryPage>
 
     _isSavingDraftSilently = true;
     try {
-      await widget.storage.saveEntryDraft(draft);
+      await widget.onSaveDraft(draft);
+      if (_suppressDraftPersistence) {
+        await widget.onClearDraft();
+        _lastSavedDraft = null;
+        return;
+      }
       _lastSavedDraft = draft;
     } finally {
       _isSavingDraftSilently = false;
@@ -715,7 +839,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       return;
     }
 
-    await widget.storage.saveEntryDraft(draft);
+    await widget.onSaveDraft(draft);
     _lastSavedDraft = draft;
     if (!mounted) {
       return;
@@ -731,7 +855,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       return _titleController.text.trim() != initialEntry.title ||
           _contentController.text.trim() != initialEntry.content ||
           _selectedMood != initialEntry.mood ||
-          !isSameDay(_selectedDate, initialEntry.createdAt) ||
+          !isSameDiaryDay(_selectedDate, initialEntry.createdAt) ||
           !_sameAttachments(_attachments, initialEntry.attachments);
     }
 
@@ -744,7 +868,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     return currentDraft.title != baseline.title ||
         currentDraft.content != baseline.content ||
         currentDraft.mood != baseline.mood ||
-        !isSameDay(currentDraft.selectedDate, baseline.selectedDate) ||
+        !isSameDiaryDay(currentDraft.selectedDate, baseline.selectedDate) ||
         !_sameAttachments(currentDraft.attachments, baseline.attachments);
   }
 
@@ -811,6 +935,9 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   }
 
   Future<void> _submit() async {
+    if (_isSubmitting) {
+      return;
+    }
     if (!_guardWritableAction()) {
       return;
     }
@@ -819,33 +946,46 @@ class _CreateEntryPageState extends State<CreateEntryPage>
       return;
     }
 
-    final now = DateTime.now();
-    final title = _titleController.text.trim();
-    final content = _contentController.text.trim();
-    final originalCreatedAt = widget.initialEntry?.createdAt ?? now;
+    setState(() {
+      _isSubmitting = true;
+    });
+    unawaited(HapticFeedback.mediumImpact());
 
-    final entry = DiaryEntry(
-      id: widget.initialEntry?.id ?? 'entry_${now.microsecondsSinceEpoch}',
-      author: _entryAuthor,
-      title: title.isEmpty ? _guessTitle(content) : title,
-      content: content,
-      mood: _selectedMood,
-      createdAt: DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-        originalCreatedAt.hour,
-        originalCreatedAt.minute,
-      ),
-      updatedAt: _isEditMode ? now : null,
-      comments: widget.initialEntry?.comments ?? const [],
-      attachments: _attachments,
-    );
+    try {
+      final now = DateTime.now();
+      final title = _titleController.text.trim();
+      final content = _contentController.text.trim();
+      final originalCreatedAt = widget.initialEntry?.createdAt ?? now;
 
-    if (!mounted) {
-      return;
+      final entry = DiaryEntry(
+        id: widget.initialEntry?.id ?? 'entry_${now.microsecondsSinceEpoch}',
+        author: _entryAuthor,
+        title: title.isEmpty ? _guessTitle(content) : title,
+        content: content,
+        mood: _selectedMood,
+        createdAt: DateTime(
+          _selectedDate.year,
+          _selectedDate.month,
+          _selectedDate.day,
+          originalCreatedAt.hour,
+          originalCreatedAt.minute,
+        ),
+        updatedAt: _isEditMode ? now : null,
+        comments: widget.initialEntry?.comments ?? const [],
+        attachments: _attachments,
+      );
+
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(entry);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
-    Navigator.of(context).pop(entry);
   }
 
   DiaryDraft _currentDraft() {
@@ -864,16 +1004,21 @@ class _CreateEntryPageState extends State<CreateEntryPage>
         draft.content.isEmpty &&
         draft.attachments.isEmpty &&
         draft.mood == kDiaryMoods.first &&
-        isSameDay(draft.selectedDate, DateTime.now());
+        isSameDiaryDay(draft.selectedDate, DateTime.now());
   }
 
   Future<void> _discardTemporaryAttachments() async {
+    if (!_isEditMode) {
+      _suppressDraftPersistence = true;
+      _draftAutosaveTimer?.cancel();
+    }
     final temporaryAttachments = _attachments
         .where(_isTemporaryAttachment)
         .toList();
-    await widget.storage.deleteAttachments(temporaryAttachments);
+    await widget.onDeleteAttachments(temporaryAttachments);
     if (!_isEditMode) {
-      await widget.storage.clearEntryDraft();
+      await widget.onClearDraft();
+      _lastSavedDraft = null;
     }
   }
 
@@ -888,8 +1033,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
     for (var index = 0; index < left.length; index++) {
       final current = left[index];
       final baseline = right[index];
-      if (current.id != baseline.id ||
-          current.path != baseline.path) {
+      if (current.id != baseline.id || current.path != baseline.path) {
         return false;
       }
     }
@@ -910,7 +1054,23 @@ class _CreateEntryPageState extends State<CreateEntryPage>
   @override
   Widget build(BuildContext context) {
     if (_isPreparingDraft) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Stack(
+          children: [
+            Positioned.fill(child: DiaryBackground()),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: DiaryPalette.rose),
+                  SizedBox(height: 16),
+                  Text('正在准备草稿...', style: TextStyle(color: DiaryPalette.wine)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     final isWriteLocked = _isWriteLocked;
@@ -936,10 +1096,21 @@ class _CreateEntryPageState extends State<CreateEntryPage>
                 onPressed: isWriteLocked ? widget.onWriteBlocked : _saveDraft,
                 child: Text(isWriteLocked ? '同步中' : '存草稿'),
               ),
-            TextButton(
-              onPressed: isWriteLocked ? widget.onWriteBlocked : _submit,
-              child: Text(isWriteLocked ? '稍后保存' : '保存'),
-            ),
+            if (_isEditMode)
+              TextButton(
+                onPressed: _isSubmitting
+                    ? null
+                    : isWriteLocked
+                    ? widget.onWriteBlocked
+                    : _submit,
+                child: Text(
+                  _isSubmitting
+                      ? '保存中'
+                      : isWriteLocked
+                      ? '稍后保存'
+                      : '保存',
+                ),
+              ),
           ],
         ),
         body: Form(
@@ -980,6 +1151,7 @@ class _CreateEntryPageState extends State<CreateEntryPage>
                         minLines: 6,
                         maxLines: 10,
                         textInputAction: TextInputAction.newline,
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
                         decoration: const InputDecoration(
                           labelText: '内容',
                           hintText: '写下今天发生的小事、心情，或者想对对方说的话。',
@@ -1012,7 +1184,10 @@ class _CreateEntryPageState extends State<CreateEntryPage>
                               ? null
                               : isWriteLocked
                               ? widget.onWriteBlocked
-                              : _pickImages,
+                              : () => _pickImages(),
+                          onLongPress: _isPickingImages || isWriteLocked
+                              ? null
+                              : () => _pickImages(forceShowSheet: true),
                           icon: const Icon(Icons.add_photo_alternate_rounded),
                           label: Text(
                             isWriteLocked
@@ -1046,7 +1221,9 @@ class _CreateEntryPageState extends State<CreateEntryPage>
                       OutlinedButton.icon(
                         onPressed: _pickDate,
                         icon: const Icon(Icons.calendar_month_rounded),
-                        label: Text('日记日期：${formatDiaryDate(_selectedDate)}'),
+                        label: Text(
+                          '日记日期：${formatDiaryDate(_selectedDate)} ${formatDiaryTime(_selectedDate)}',
+                        ),
                       ),
                       if (_attachments.isNotEmpty) ...[
                         const SizedBox(height: 14),
@@ -1069,10 +1246,20 @@ class _CreateEntryPageState extends State<CreateEntryPage>
                 const DraftHintCard(),
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: isWriteLocked ? widget.onWriteBlocked : _submit,
-                  icon: const Icon(Icons.favorite_rounded),
+                  onPressed: _isSubmitting
+                      ? null
+                      : isWriteLocked
+                      ? widget.onWriteBlocked
+                      : _submit,
+                  icon: Icon(
+                    _isSubmitting
+                        ? Icons.hourglass_top_rounded
+                        : Icons.favorite_rounded,
+                  ),
                   label: Text(
-                    isWriteLocked
+                    _isSubmitting
+                        ? '保存中...'
+                        : isWriteLocked
                         ? '同步中，稍后保存'
                         : _isEditMode
                         ? '保存修改'
@@ -1187,20 +1374,4 @@ class CommentCard extends StatelessWidget {
       ),
     );
   }
-}
-
-bool isSameDay(DateTime a, DateTime b) {
-  return a.year == b.year && a.month == b.month && a.day == b.day;
-}
-
-String resolveStoredPath(String? rootDirectoryPath, String storedPath) {
-  final normalized = storedPath.replaceAll('\\', '/');
-  final isAbsoluteUnix = normalized.startsWith('/');
-  final isAbsoluteWindows = RegExp(r'^[a-zA-Z]:/').hasMatch(normalized);
-  if (isAbsoluteUnix || isAbsoluteWindows || rootDirectoryPath == null) {
-    return storedPath;
-  }
-
-  final normalizedRoot = rootDirectoryPath.replaceAll('\\', '/');
-  return '$normalizedRoot/$normalized';
 }

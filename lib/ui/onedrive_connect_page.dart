@@ -31,6 +31,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
   bool _isLoading = false;
   bool _isCompleting = false;
   bool _isOpeningBrowser = false;
+  bool _sessionNeedsRefresh = false;
   String? _error;
 
   @override
@@ -55,6 +56,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       _isLoading = true;
       _error = null;
       _session = null;
+      _sessionNeedsRefresh = false;
     });
 
     try {
@@ -150,7 +152,7 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
 
   Future<void> _completeFlow() async {
     final session = _session;
-    if (session == null || _isCompleting) {
+    if (session == null || _isCompleting || _sessionNeedsRefresh) {
       return;
     }
 
@@ -169,6 +171,9 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
       if (mounted) {
         setState(() {
           _error = error.message;
+          _sessionNeedsRefresh = OneDriveAuthService.isUsedDeviceCodeError(
+            error.message,
+          );
         });
       }
     } catch (error) {
@@ -263,8 +268,14 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
                       index: '3',
                       title: '回到应用确认',
                       body: '浏览器里显示授权完成后，再点击下面按钮继续。',
-                      actionLabel: _isCompleting ? '正在确认...' : '我已完成授权',
-                      onAction: _isCompleting ? null : _completeFlow,
+                      actionLabel: _sessionNeedsRefresh
+                          ? '请重新获取验证码'
+                          : _isCompleting
+                          ? '正在确认...'
+                          : '我已完成授权',
+                      onAction: _sessionNeedsRefresh || _isCompleting
+                          ? null
+                          : _completeFlow,
                     ),
                   ],
                 ),
@@ -273,12 +284,25 @@ class _OneDriveConnectPageState extends State<OneDriveConnectPage> {
             if (_error != null) ...[
               const SizedBox(height: 16),
               DiaryPanel(
-                child: Text(
-                  _error!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: DiaryPalette.rose,
-                    height: 1.45,
-                  ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: DiaryPalette.rose,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.rose,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

@@ -1,4 +1,10 @@
-part of '../../app.dart';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../../models/diary_models.dart';
+import '../../ui/diary_design.dart';
 
 class AttachmentGrid extends StatelessWidget {
   const AttachmentGrid({
@@ -243,9 +249,9 @@ class _AttachmentPreviewPageState extends State<AttachmentPreviewPage> {
         : attachment.originalName;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF1A1412),
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: const Color(0xFF1A1412),
         foregroundColor: Colors.white,
         title: Text('${_currentIndex + 1}/${widget.attachments.length}'),
       ),
@@ -283,7 +289,7 @@ class _AttachmentPreviewPageState extends State<AttachmentPreviewPage> {
             bottom: 24,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.black54,
+                color: DiaryPalette.ink.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Padding(

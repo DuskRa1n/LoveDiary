@@ -2,9 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
 import '../../data/diary_storage.dart';
+import '../../utils/app_log.dart';
 import '../sync_models.dart';
 import 'onedrive_models.dart';
 
@@ -18,15 +17,61 @@ class OneDriveAuthException implements Exception {
 }
 
 class OneDriveAuthService {
-  OneDriveAuthService({required this.storage});
+  OneDriveAuthService({required this.storage, Uri? authorityBaseUri})
+    : _authorityBaseUri =
+          authorityBaseUri ?? Uri.parse('https://login.microsoftonline.com'),
+      _httpClient = HttpClient() {
+    _httpClient.connectionTimeout = _requestTimeout;
+    _httpClient.idleTimeout = const Duration(seconds: 30);
+  }
 
   static const _defaultTenant = 'consumers';
   static const _defaultRemoteFolder = 'love_diary';
   static const _graphBaseUrl = 'https://graph.microsoft.com/v1.0';
+  static const _graphScopes =
+      'https://graph.microsoft.com/Files.ReadWrite.AppFolder '
+      'https://graph.microsoft.com/User.Read '
+      'offline_access openid profile';
   static const _requestTimeout = Duration(seconds: 45);
+  static const invalidAccessTokenMessage = 'OneDrive 登录状态异常，请重新连接 OneDrive。';
+  static const usedDeviceCodeMessage = '这个 OneDrive 验证码已经失效，请点击“重新获取验证码”后重新授权。';
 
   final DiaryStorage storage;
-  Completer<String>? _refreshCompleter;
+  final Uri _authorityBaseUri;
+  final HttpClient _httpClient;
+  Future<String>? _refreshFuture;
+
+  static bool isMalformedAccessTokenError(String? message) {
+    final value = message ?? '';
+    return value.contains('IDX14100') ||
+        value.contains('JWT is not well formed') ||
+        value.contains('JWS or JWE Compact Serialization');
+  }
+
+  static bool isUsedDeviceCodeError(String? message) {
+    final value = message ?? '';
+    return value == usedDeviceCodeMessage ||
+        value.contains('AADSTS70000') ||
+        (value.contains('device_code') && value.contains('already been used'));
+  }
+
+  static String normalizeAuthErrorMessage(String? message, String fallback) {
+    final normalized = message?.trim();
+    if (isMalformedAccessTokenError(normalized)) {
+      return invalidAccessTokenMessage;
+    }
+    if (isUsedDeviceCodeError(normalized)) {
+      return usedDeviceCodeMessage;
+    }
+    if (normalized == null || normalized.isEmpty) {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  void dispose() {
+    _httpClient.close();
+  }
 
   Future<OneDriveSyncConfig?> loadConfig() async {
     return storage.loadOneDriveSyncConfig();
@@ -43,14 +88,8 @@ class OneDriveAuthService {
     String remoteFolder = _defaultRemoteFolder,
   }) async {
     final response = await _postForm(
-      Uri.parse(
-        'https://login.microsoftonline.com/$tenant/oauth2/v2.0/devicecode',
-      ),
-      {
-        'client_id': clientId,
-        'scope':
-            'offline_access Files.ReadWrite.AppFolder User.Read openid profile',
-      },
+      _authorityUri(tenant, 'oauth2/v2.0/devicecode'),
+      {'client_id': clientId, 'scope': _graphScopes},
     );
     final jsonMap = _decodeJson(response.body);
     _ensureSuccess(response.statusCode, jsonMap);
@@ -78,35 +117,44 @@ class OneDriveAuthService {
     var pollInterval = session.intervalSeconds;
 
     while (DateTime.now().isBefore(deadline)) {
-      final response = await _postForm(
-        Uri.parse(
-          'https://login.microsoftonline.com/${session.tenant}/oauth2/v2.0/token',
-        ),
-        {
-          'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-          'client_id': session.clientId,
-          'device_code': session.deviceCode,
-        },
-      );
+      final response =
+          await _postForm(_authorityUri(session.tenant, 'oauth2/v2.0/token'), {
+            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+            'client_id': session.clientId,
+            'device_code': session.deviceCode,
+          });
       final jsonMap = _decodeJson(response.body);
 
       if (response.statusCode == 200) {
         final now = DateTime.now();
-        final accessToken = jsonMap['access_token'] as String;
-        final refreshToken = jsonMap['refresh_token'] as String? ?? '';
+        final accessToken = _readRequiredToken(
+          jsonMap,
+          'access_token',
+          'OneDrive 未返回访问令牌，请重新连接 OneDrive。',
+        );
+        final refreshToken = _readRequiredToken(
+          jsonMap,
+          'refresh_token',
+          'OneDrive 未返回刷新令牌，请重新连接 OneDrive。',
+        );
         final expiresIn = (jsonMap['expires_in'] as num?)?.toInt() ?? 3600;
-        final profile = await _fetchProfile(accessToken);
-        final config = OneDriveSyncConfig(
+        var config = OneDriveSyncConfig(
           clientId: session.clientId,
           tenant: session.tenant,
           remoteFolder: session.remoteFolder,
           accessToken: accessToken,
           refreshToken: refreshToken,
           expiresAt: now.add(Duration(seconds: expiresIn)),
-          accountName: profile.$1,
-          accountEmail: profile.$2,
         );
         await storage.saveOneDriveSyncConfig(config);
+        final profile = await _fetchProfile(accessToken);
+        if (profile.$1 != null || profile.$2 != null) {
+          config = config.copyWith(
+            accountName: profile.$1,
+            accountEmail: profile.$2,
+          );
+          await storage.saveOneDriveSyncConfig(config);
+        }
         return config;
       }
 
@@ -121,76 +169,73 @@ class OneDriveAuthService {
         continue;
       }
       if (error == 'authorization_declined') {
-        throw const OneDriveAuthException(
-          'OneDrive authorization was declined.',
-        );
+        throw const OneDriveAuthException('OneDrive 授权被拒绝。');
       }
       if (error == 'expired_token') {
-        throw const OneDriveAuthException('OneDrive device code expired.');
+        throw const OneDriveAuthException('OneDrive 设备码已过期。');
       }
 
       throw OneDriveAuthException(
-        (jsonMap['error_description'] as String?) ??
-            'OneDrive sign-in failed unexpectedly.',
+        normalizeAuthErrorMessage(
+          (jsonMap['error_description'] as String?) ??
+              (jsonMap['error'] as String?),
+          'OneDrive 登录出现异常。',
+        ),
       );
     }
 
-    throw const OneDriveAuthException(
-      'Timed out waiting for OneDrive sign-in.',
-    );
+    throw const OneDriveAuthException('等待 OneDrive 登录超时。');
   }
 
-  Future<String> getValidAccessToken() async {
+  Future<String> getValidAccessToken({bool forceRefresh = false}) async {
     final config = await storage.loadOneDriveSyncConfig();
     if (config == null) {
-      throw const OneDriveAuthException('OneDrive is not connected yet.');
+      throw const OneDriveAuthException('OneDrive 尚未连接。');
     }
-    if (!config.isExpired) {
-      return config.accessToken;
+    final accessToken = config.accessToken.trim();
+    if (!forceRefresh && !config.isExpired && accessToken.isNotEmpty) {
+      return accessToken;
     }
     if (config.refreshToken.isEmpty) {
-      throw const OneDriveAuthException(
-        'OneDrive session expired and no refresh token is available.',
-      );
+      throw const OneDriveAuthException('OneDrive 会话已过期且没有可用的刷新令牌。');
     }
 
     // 防止并发刷新Token
-    if (_refreshCompleter != null) {
-      debugPrint('等待正在进行的Token刷新...');
-      return _refreshCompleter!.future;
+    final activeRefresh = _refreshFuture;
+    if (activeRefresh != null) {
+      AppLog.info('等待正在进行的Token刷新...');
+      return activeRefresh;
     }
 
-    _refreshCompleter = Completer<String>();
+    final refreshFuture = _refreshToken(config);
+    _refreshFuture = refreshFuture;
     try {
-      final token = await _refreshToken(config);
-      _refreshCompleter!.complete(token);
-      return token;
-    } catch (error) {
-      _refreshCompleter!.completeError(error);
-      rethrow;
+      return await refreshFuture;
     } finally {
-      _refreshCompleter = null;
+      if (identical(_refreshFuture, refreshFuture)) {
+        _refreshFuture = null;
+      }
     }
   }
 
   Future<String> _refreshToken(OneDriveSyncConfig config) async {
-    final response = await _postForm(
-      Uri.parse(
-        'https://login.microsoftonline.com/${config.tenant}/oauth2/v2.0/token',
-      ),
-      {
-        'grant_type': 'refresh_token',
-        'client_id': config.clientId,
-        'refresh_token': config.refreshToken,
-        'scope':
-            'offline_access Files.ReadWrite.AppFolder User.Read openid profile',
-      },
-    );
+    final response =
+        await _postForm(_authorityUri(config.tenant, 'oauth2/v2.0/token'), {
+          'grant_type': 'refresh_token',
+          'client_id': config.clientId,
+          'refresh_token': config.refreshToken,
+          'scope': _graphScopes,
+        });
     final jsonMap = _decodeJson(response.body);
     _ensureSuccess(response.statusCode, jsonMap);
+    final accessToken = _readRequiredToken(
+      jsonMap,
+      'access_token',
+      'OneDrive 未返回新的访问令牌，请重新连接 OneDrive。',
+    );
 
     final refreshedConfig = config.copyWith(
-      accessToken: jsonMap['access_token'] as String,
+      accessToken: accessToken,
       refreshToken:
           (jsonMap['refresh_token'] as String?) ?? config.refreshToken,
       expiresAt: DateTime.now().add(
@@ -204,7 +249,7 @@ class OneDriveAuthService {
   Future<OneDriveSyncConfig> requireConfig() async {
     final config = await storage.loadOneDriveSyncConfig();
     if (config == null) {
-      throw const OneDriveAuthException('OneDrive is not connected yet.');
+      throw const OneDriveAuthException('OneDrive 尚未连接。');
     }
     return config;
   }
@@ -226,14 +271,14 @@ class OneDriveAuthService {
         jsonMap['userPrincipalName'] as String?,
       );
     } catch (_) {
+      AppLog.warn('获取OneDrive用户信息失败');
       return (null, null);
     }
   }
 
   Future<_HttpResponseData> _postForm(Uri uri, Map<String, String> form) async {
-    final client = HttpClient()..connectionTimeout = _requestTimeout;
     try {
-      final request = await client.postUrl(uri).timeout(_requestTimeout);
+      final request = await _httpClient.postUrl(uri).timeout(_requestTimeout);
       request.headers.set(
         HttpHeaders.contentTypeHeader,
         'application/x-www-form-urlencoded',
@@ -246,11 +291,7 @@ class OneDriveAuthService {
           .timeout(_requestTimeout);
       return _HttpResponseData(statusCode: response.statusCode, body: body);
     } on TimeoutException catch (error) {
-      throw OneDriveAuthException(
-        'OneDrive authorization request timed out: $error',
-      );
-    } finally {
-      client.close(force: true);
+      throw OneDriveAuthException('OneDrive 授权请求超时：$error');
     }
   }
 
@@ -258,9 +299,8 @@ class OneDriveAuthService {
     required Uri uri,
     required String accessToken,
   }) async {
-    final client = HttpClient()..connectionTimeout = _requestTimeout;
     try {
-      final request = await client.getUrl(uri).timeout(_requestTimeout);
+      final request = await _httpClient.getUrl(uri).timeout(_requestTimeout);
       request.headers.set(
         HttpHeaders.authorizationHeader,
         'Bearer $accessToken',
@@ -273,9 +313,7 @@ class OneDriveAuthService {
           .timeout(_requestTimeout);
       return _HttpResponseData(statusCode: response.statusCode, body: body);
     } on TimeoutException catch (error) {
-      throw OneDriveAuthException('OneDrive profile request timed out: $error');
-    } finally {
-      client.close(force: true);
+      throw OneDriveAuthException('OneDrive 用户信息请求超时：$error');
     }
   }
 
@@ -286,14 +324,39 @@ class OneDriveAuthService {
     return jsonDecode(body) as Map<String, dynamic>;
   }
 
+  String _readRequiredToken(
+    Map<String, dynamic> payload,
+    String key,
+    String message,
+  ) {
+    final value = (payload[key] as String?)?.trim() ?? '';
+    if (value.isEmpty) {
+      throw OneDriveAuthException(message);
+    }
+    return value;
+  }
+
+  Uri _authorityUri(String tenant, String path) {
+    final baseSegments = _authorityBaseUri.pathSegments.where(
+      (segment) => segment.isNotEmpty,
+    );
+    final pathSegments = path.split('/').where((segment) => segment.isNotEmpty);
+    return _authorityBaseUri.replace(
+      pathSegments: [...baseSegments, tenant, ...pathSegments],
+      query: null,
+      fragment: null,
+    );
+  }
+
   void _ensureSuccess(int statusCode, Map<String, dynamic> payload) {
     if (statusCode >= 200 && statusCode < 300) {
       return;
     }
+    final message =
+        (payload['error_description'] as String?) ??
+        (payload['error'] as String?);
     throw OneDriveAuthException(
-      (payload['error_description'] as String?) ??
-          (payload['error'] as String?) ??
-          'OneDrive request failed with status $statusCode.',
+      normalizeAuthErrorMessage(message, 'OneDrive 请求失败，状态码 $statusCode。'),
     );
   }
 }

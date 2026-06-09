@@ -295,7 +295,7 @@ void main() {
         isOnboarded: true,
       ),
     );
-    await storage.saveEntries(DiaryStorage.seedEntries().take(1).toList());
+    await storage.saveEntries(seedEntries().take(1).toList());
 
     final service = DiarySyncService(
       storage: storage,
@@ -784,7 +784,7 @@ void main() {
         isOnboarded: true,
       ),
     );
-    await storage.saveEntries(DiaryStorage.seedEntries().take(1).toList());
+    await storage.saveEntries(seedEntries().take(1).toList());
 
     final remoteSource = MemoryRemoteSource();
     final firstExecutor = DiarySyncExecutor(

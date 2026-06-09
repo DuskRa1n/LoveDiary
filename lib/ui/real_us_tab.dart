@@ -17,6 +17,8 @@ class RealUsTab extends StatelessWidget {
     required this.onOpenDustbin,
     required this.onConnectOneDrive,
     required this.onOpenOneDriveSettings,
+    required this.onRunMaintenance,
+    required this.onOpenDiagnostics,
     this.topContentInset = 0,
     this.sheetMode = false,
   });
@@ -31,6 +33,8 @@ class RealUsTab extends StatelessWidget {
   final Future<void> Function() onOpenDustbin;
   final Future<void> Function() onConnectOneDrive;
   final Future<void> Function() onOpenOneDriveSettings;
+  final Future<void> Function() onRunMaintenance;
+  final Future<void> Function() onOpenDiagnostics;
   final double topContentInset;
   final bool sheetMode;
 
@@ -88,9 +92,18 @@ class RealUsTab extends StatelessWidget {
                   ),
                   const _SettingsDivider(),
                   _SettingsTile(
+                    icon: Icons.health_and_safety_rounded,
+                    title: '自检维护',
+                    subtitle: '清理残留、重建索引、修复同步状态',
+                    onTap: () {
+                      onRunMaintenance();
+                    },
+                  ),
+                  const _SettingsDivider(),
+                  _SettingsTile(
                     icon: Icons.tune_rounded,
                     title: '其他设置',
-                    subtitle: '备份同步、回收站、关于',
+                    subtitle: '回收站、关于',
                     onTap: () => _openOtherSettings(
                       context,
                       commentCount: commentCount,
@@ -179,7 +192,7 @@ class RealUsTab extends StatelessWidget {
                     style: Theme.of(sheetContext).textTheme.titleLarge
                         ?.copyWith(
                           color: DiaryPalette.ink,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
                         ),
                   ),
                 ),
@@ -198,6 +211,16 @@ class RealUsTab extends StatelessWidget {
                         onTap: () {
                           Navigator.of(sheetContext).pop();
                           onOpenDustbin();
+                        },
+                      ),
+                      const _SettingsDivider(),
+                      _SettingsTile(
+                        icon: Icons.bug_report_outlined,
+                        title: '诊断日志',
+                        subtitle: '查看最近的错误和后台任务记录',
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          onOpenDiagnostics();
                         },
                       ),
                       const _SettingsDivider(),
@@ -226,42 +249,244 @@ class RealUsTab extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('关于恋爱日记'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('两个人私用的恋爱日记。'),
-              const SizedBox(height: 14),
-              const Text('作者：Eric Chen'),
-              const SizedBox(height: 8),
-              const Text('版本：1.4.10+91'),
-              const SizedBox(height: 14),
-              const Text('数据优先保存在本机，同步只用于你主动连接的云端。'),
-              const SizedBox(height: 8),
-              const Text('OneDrive 是主要同步方式，坚果云保留为备用方案。'),
-              if (lastSyncFailureMessage != null &&
-                  lastSyncFailureMessage!.trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  '最近同步提示：${lastSyncFailureMessage!.trim()}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: DiaryPalette.wine,
-                    height: 1.45,
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 28,
+            vertical: 24,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: DiaryPalette.white,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: DiaryPalette.rose.withValues(alpha: 0.15),
+                  blurRadius: 32,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 28),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFFFFFBF5),
+                        Color(0xFFFFE3DB),
+                        Color(0xFFFFF0D8),
+                      ],
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              DiaryPalette.mist.withValues(alpha: 0.96),
+                              DiaryPalette.blush.withValues(alpha: 0.40),
+                            ],
+                          ),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: DiaryPalette.white,
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: DiaryPalette.rose.withValues(alpha: 0.18),
+                              blurRadius: 16,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.favorite_rounded,
+                          color: DiaryPalette.rose,
+                          size: 30,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '恋爱日记',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: DiaryPalette.ink,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '版本 1.4.15+96',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DiaryPalette.wine.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '为两个人长期记录生活而设计的日记。',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DiaryPalette.wine,
+                          height: 1.6,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.person_rounded,
+                            size: 16,
+                            color: DiaryPalette.wine.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '作者：Eric Chen',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: DiaryPalette.ink),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.cloud_sync_rounded,
+                            size: 16,
+                            color: DiaryPalette.wine.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '数据保存在本机，可选 OneDrive 同步到云端。同步过程中日记会暂时锁定，完成后自动恢复。',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: DiaryPalette.wine.withValues(
+                                      alpha: 0.8,
+                                    ),
+                                    height: 1.5,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.delete_outline_rounded,
+                            size: 16,
+                            color: DiaryPalette.wine.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '删除的日记会进入回收站，7 天内可恢复。',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: DiaryPalette.wine.withValues(
+                                      alpha: 0.8,
+                                    ),
+                                    height: 1.5,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (lastSyncFailureMessage != null &&
+                          lastSyncFailureMessage!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: DiaryPalette.mist.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: DiaryPalette.blush.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.info_outline_rounded,
+                                size: 16,
+                                color: DiaryPalette.rose,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  lastSyncFailureMessage!.trim(),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: DiaryPalette.wine,
+                                        height: 1.45,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Center(
+                        child: Text(
+                          '愿你们把重要的小事，都认真留住。',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: DiaryPalette.wine.withValues(alpha: 0.5),
+                                fontStyle: FontStyle.italic,
+                                height: 1.5,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: DiaryPalette.rose,
+                        foregroundColor: DiaryPalette.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      child: const Text('知道了'),
+                    ),
                   ),
                 ),
               ],
-              const SizedBox(height: 14),
-              const Text('愿你们把重要的小事，都认真留住。'),
-            ],
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('知道了'),
             ),
-          ],
+          ),
         );
       },
     );
@@ -338,7 +563,7 @@ class _AvatarBubble extends StatelessWidget {
           initial,
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
             color: accent ? DiaryPalette.rose : DiaryPalette.tea,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w800,
           ),
         ),
       ),
@@ -388,7 +613,7 @@ class _SettingsTile extends StatelessWidget {
                     title,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: DiaryPalette.ink,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                   if (subtitle?.trim().isNotEmpty == true) ...[
